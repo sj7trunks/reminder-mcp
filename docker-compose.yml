@@ -1,0 +1,43 @@
+services:
+  reminder-mcp:
+    build: .
+    container_name: reminder-mcp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Server configuration
+      - PORT=3000
+      - HOST=0.0.0.0
+
+      # REQUIRED: Set your API key for authentication
+      # Generate one with: openssl rand -hex 32
+      - API_KEY=${API_KEY:-}
+
+      # Database (SQLite by default, stored in volume)
+      - DATABASE_TYPE=sqlite
+      - DATABASE_PATH=/app/data/reminder.db
+
+      # Timezone
+      - DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-America/Los_Angeles}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+
+      # Optional: Webhook for push notifications
+      # - WEBHOOK_URL=https://your-app.com/notifications
+
+    volumes:
+      # Persist database
+      - reminder-data:/app/data
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  reminder-data:
+    driver: local
