@@ -11,6 +11,7 @@ const configSchema = z.object({
   }),
   webhook: z.object({
     url: z.string().optional(),
+    apiKey: z.string().optional(),
   }),
   server: z.object({
     port: z.number().default(3000),
@@ -35,6 +36,7 @@ export function loadConfig(): Config {
     },
     webhook: {
       url: process.env.WEBHOOK_URL,
+      apiKey: process.env.WEBHOOK_API_KEY,
     },
     server: {
       port: parseInt(process.env.PORT || '3000', 10),

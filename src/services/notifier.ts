@@ -13,12 +13,18 @@ export async function sendNotification(notification: Notification): Promise<bool
   // If webhook is configured, send notification
   if (config.webhook.url) {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (config.webhook.apiKey) {
+        headers['Authorization'] = `Bearer ${config.webhook.apiKey}`;
+      }
+
       const response = await fetch(config.webhook.url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(notification),
+        headers,
+        body: JSON.stringify({ message: `${notification.title}: ${notification.message}` }),
       });
 
       if (!response.ok) {

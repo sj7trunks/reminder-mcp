@@ -2,7 +2,7 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer } from './server.js';
 import { runMigrations, closeDatabase } from './db/index.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
@@ -40,56 +40,58 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Track active transports for cleanup
-const activeTransports = new Map<string, SSEServerTransport>();
+// Streamable HTTP MCP endpoint (stateless - new server per request)
+app.post('/mcp', authenticate, async (req: Request, res: Response) => {
+  const server = createServer();
 
-// SSE endpoint for MCP
-app.get('/sse', authenticate, async (req: Request, res: Response) => {
-  console.log('New SSE connection');
+  try {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
 
-  // Create MCP server and transport
-  const mcpServer = createServer();
-  const transport = new SSEServerTransport('/messages', res);
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
 
-  // Store transport for cleanup
-  const connectionId = Math.random().toString(36).substring(7);
-  activeTransports.set(connectionId, transport);
-
-  // Clean up on disconnect
-  res.on('close', () => {
-    console.log('SSE connection closed');
-    activeTransports.delete(connectionId);
-  });
-
-  // Connect transport to server
-  await mcpServer.connect(transport);
-});
-
-// Messages endpoint for client-to-server communication
-app.post('/messages', authenticate, async (req: Request, res: Response) => {
-  const sessionId = req.query.sessionId as string;
-
-  if (!sessionId) {
-    res.status(400).json({ error: 'Missing sessionId parameter' });
-    return;
-  }
-
-  // Find the transport for this session
-  // The SSEServerTransport handles routing internally based on sessionId
-  // We need to find the right transport and forward the message
-
-  // For now, broadcast to all transports (simple approach)
-  // In production, you'd want proper session management
-  for (const transport of activeTransports.values()) {
-    try {
-      await transport.handlePostMessage(req, res);
-      return;
-    } catch {
-      // Try next transport
+    res.on('close', () => {
+      transport.close();
+      server.close();
+    });
+  } catch (error) {
+    console.error('Error handling MCP request:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Internal server error',
+        },
+        id: null,
+      });
     }
   }
+});
 
-  res.status(404).json({ error: 'Session not found' });
+// GET and DELETE on /mcp not supported in stateless mode
+app.get('/mcp', (_req, res) => {
+  res.status(405).json({
+    jsonrpc: '2.0',
+    error: {
+      code: -32000,
+      message: 'Method not allowed.',
+    },
+    id: null,
+  });
+});
+
+app.delete('/mcp', (_req, res) => {
+  res.status(405).json({
+    jsonrpc: '2.0',
+    error: {
+      code: -32000,
+      message: 'Method not allowed.',
+    },
+    id: null,
+  });
 });
 
 async function main(): Promise<void> {
@@ -116,7 +118,7 @@ async function main(): Promise<void> {
   const { port, host } = config.server;
   app.listen(port, host, () => {
     console.log(`Reminder MCP server running at http://${host}:${port}`);
-    console.log(`SSE endpoint: http://${host}:${port}/sse`);
+    console.log(`MCP endpoint: http://${host}:${port}/mcp`);
     if (config.server.apiKey) {
       console.log('API key authentication enabled');
     } else {

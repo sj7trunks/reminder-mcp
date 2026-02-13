@@ -11,46 +11,49 @@ This is an MCP (Model Context Protocol) server that provides persistent memory, 
 ```bash
 # Development
 npm run dev          # stdio mode (for Claude Desktop)
-npm run dev:http     # HTTP/SSE mode (for Poke)
+npm run dev:http     # HTTP mode (for Poke)
 
 # Production
 npm run build        # Compile TypeScript
 npm run start        # Run stdio mode
-npm run start:http   # Run HTTP/SSE mode
+npm run start:http   # Run HTTP mode
 
 # Database
 npm run migrate      # Run database migrations
 
 # Docker
-docker-compose up -d # Run HTTP server in container
+docker compose up -d # Run HTTP server in container
 ```
 
 ## Architecture
 
 ### Entry Points
 - `src/index.ts` - stdio transport entry point (for Claude Desktop)
-- `src/http.ts` - HTTP/SSE transport entry point (for Poke and remote clients)
-- `src/server.ts` - Creates McpServer instance, registers all 14 tools
+- `src/http.ts` - Streamable HTTP transport entry point (for Poke and remote clients)
+- `src/server.ts` - Creates McpServer instance, registers all 15 tools
 
 ### Transport Modes
 
 | Mode | File | Use Case | Auth |
 |------|------|----------|------|
 | stdio | `index.ts` | Local CLI tools (Claude Desktop) | None |
-| HTTP/SSE | `http.ts` | Remote clients (Poke) | API Key via `Authorization: Bearer` header |
+| Streamable HTTP | `http.ts` | Remote clients (Poke) | API Key via `Authorization: Bearer` header |
+
+The HTTP transport uses the **Streamable HTTP** spec (2025-03-26) with a single `/mcp` endpoint that accepts POST requests. This replaced the older SSE transport. The server runs in stateless mode (new MCP server instance per request, shared database).
 
 ### Database Layer
 - Uses Knex.js as query builder
 - SQLite for development, PostgreSQL for production
 - Migrations in `src/db/migrations/` (auto-detects .ts vs .js)
 - Models define Zod schemas for validation
+- The `db` instance is a module-level singleton shared across all requests
 
 ### Services
-- `scheduler.ts` - Background polling (60s interval) for due reminders/tasks
-- `notifier.ts` - Sends webhook notifications if `WEBHOOK_URL` is configured
+- `scheduler.ts` - Background polling (60s interval) for due reminders/tasks. Sends webhook notifications when items are due.
+- `notifier.ts` - Sends webhook notifications to configured endpoint (e.g., Poke). Formats payload as `{"message": "..."}` with Bearer token auth.
 - `timezone.ts` - Converts between timezones, parses relative times like "tomorrow at 2pm"
 
-### Tools (14 total)
+### Tools (15 total)
 Each tool file exports:
 1. Zod schemas for input validation
 2. Handler functions that interact with the database
@@ -145,6 +148,14 @@ if (apiKey !== config.server.apiKey) {
 }
 ```
 
+### Webhook Notifications
+
+The notifier sends POST requests to `WEBHOOK_URL` with `WEBHOOK_API_KEY` as a Bearer token:
+```typescript
+// Payload format for Poke compatibility
+{ "message": "Reminder title: Your reminder is due" }
+```
+
 ## Database Schema
 
 ### reminders
@@ -210,9 +221,12 @@ Then edit the generated file in `src/db/migrations/`.
 # Test stdio mode
 npx @modelcontextprotocol/inspector node dist/index.js
 
-# Test HTTP mode
+# Test HTTP mode (Streamable HTTP)
 API_KEY=test-key npm run start:http
-# Then curl http://localhost:3000/health
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}'
 ```
 
 ### Testing with the Test Script
@@ -227,6 +241,7 @@ npx tsx test-tools.ts
 - Set `LOG_LEVEL=debug` in .env for verbose output
 - Check `data/reminder.db` with any SQLite viewer
 - Health endpoint: `GET /health` (no auth required)
+- MCP endpoint: `POST /mcp` (auth required)
 
 ## Deployment
 
@@ -240,7 +255,7 @@ export API_KEY=$(openssl rand -hex 32)
 echo "API_KEY=$API_KEY" > .env
 
 # Deploy
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Environment Variables
@@ -252,6 +267,8 @@ docker-compose up -d
 | `DATABASE_TYPE` | No | sqlite | sqlite or postgres |
 | `DATABASE_PATH` | No | ./data/reminder.db | SQLite path |
 | `DEFAULT_TIMEZONE` | No | America/Los_Angeles | Default TZ |
+| `WEBHOOK_URL` | No | - | Webhook URL for push notifications |
+| `WEBHOOK_API_KEY` | No | - | Bearer token for webhook auth |
 
 ## Error Handling
 
