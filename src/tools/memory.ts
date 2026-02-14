@@ -4,13 +4,13 @@ import { db } from '../db/index.js';
 import type { Memory } from '../db/models/Memory.js';
 
 export const RememberSchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   content: z.string().min(1).describe('What to remember'),
   tags: z.array(z.string()).optional().default([]).describe('Optional tags for categorization'),
 });
 
 export const RecallSchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   query: z.string().optional().describe('Optional search query to filter memories'),
   tags: z.array(z.string()).optional().describe('Filter by tags'),
   limit: z.number().optional().default(50).describe('Maximum number of results'),
@@ -110,8 +110,11 @@ export async function recall(input: z.infer<typeof RecallSchema>): Promise<{ mem
   return { memories };
 }
 
-export async function forget(input: z.infer<typeof ForgetSchema>): Promise<{ success: boolean; error?: string }> {
-  const memory = await db('memories').where('id', input.memory_id).first();
+export async function forget(input: z.infer<typeof ForgetSchema> & { user_id: string }): Promise<{ success: boolean; error?: string }> {
+  const memory = await db('memories')
+    .where('id', input.memory_id)
+    .where('user_id', input.user_id)
+    .first();
 
   if (!memory) {
     return { success: false, error: 'Memory not found' };
@@ -123,7 +126,7 @@ export async function forget(input: z.infer<typeof ForgetSchema>): Promise<{ suc
   const now = new Date();
   await db('activities').insert({
     id: uuid(),
-    user_id: memory.user_id,
+    user_id: input.user_id,
     type: 'memory',
     action: 'deleted',
     entity_id: input.memory_id,

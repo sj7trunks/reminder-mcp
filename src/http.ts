@@ -2,47 +2,57 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer } from './server.js';
 import { runMigrations, closeDatabase } from './db/index.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
 import { config } from './config/index.js';
+import { requireApiKey, authentikAutoLogin, type AuthRequest } from './middleware/auth.js';
+
+// Import routes
+import authRoutes from './routes/auth.js';
+import keysRoutes from './routes/keys.js';
+import remindersRoutes from './routes/reminders.js';
+import memoriesRoutes from './routes/memories.js';
+import tasksRoutes from './routes/tasks.js';
+import statsRoutes from './routes/stats.js';
+import adminRoutes from './routes/admin.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
-
-// API Key authentication middleware
-function authenticate(req: Request, res: Response, next: NextFunction): void {
-  if (!config.server.apiKey) {
-    // No API key configured, allow all requests
-    next();
-    return;
-  }
-
-  const authHeader = req.headers.authorization;
-  const apiKey = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : req.query.api_key as string;
-
-  if (!apiKey || apiKey !== config.server.apiKey) {
-    res.status(401).json({ error: 'Unauthorized: Invalid or missing API key' });
-    return;
-  }
-
-  next();
-}
+app.use(cookieParser());
 
 // Health check endpoint (no auth required)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Log incoming MCP requests for debugging
+app.use('/mcp', (req: Request, _res: Response, next: NextFunction) => {
+  if (req.method === 'POST' && req.body) {
+    const body = req.body;
+    const method = body.method || '(batch)';
+    if (method === 'tools/call') {
+      console.log(`[MCP] tools/call → ${body.params?.name}`, JSON.stringify(body.params?.arguments));
+    } else {
+      console.log(`[MCP] ${method}`);
+    }
+  }
+  next();
+});
+
 // Streamable HTTP MCP endpoint (stateless - new server per request)
-app.post('/mcp', authenticate, async (req: Request, res: Response) => {
-  const server = createServer();
+app.post('/mcp', requireApiKey, async (req: AuthRequest, res: Response) => {
+  const server = createServer(req.user!.id);
 
   try {
     const transport = new StreamableHTTPServerTransport({
@@ -94,6 +104,53 @@ app.delete('/mcp', (_req, res) => {
   });
 });
 
+// Authentik auto-login middleware — runs globally so that the JWT cookie
+// gets set on the very first page load (e.g. GET /).  If no X-authentik-email
+// header is present (MCP clients, local dev) it's a no-op.
+app.use(authentikAutoLogin);
+
+// REST API routes
+app.use('/api/auth', authRoutes);
+app.use('/api/keys', keysRoutes);
+app.use('/api/reminders', remindersRoutes);
+app.use('/api/memories', memoriesRoutes);
+app.use('/api/tasks', tasksRoutes);
+app.use('/api/stats', statsRoutes);
+app.use('/api/admin', adminRoutes);
+
+// Static file serving for production (React SPA)
+if (process.env.NODE_ENV === 'production') {
+  const frontendDir = path.join(__dirname, '..', 'frontend', 'dist');
+  app.use(express.static(frontendDir));
+
+  // Pre-build SPA fallback HTML with injected config
+  const indexPath = path.join(frontendDir, 'index.html');
+  let indexHtml: string | null = null;
+  try {
+    const raw = fs.readFileSync(indexPath, 'utf-8');
+    const authentikHost = config.authentik.host;
+    const logoutUrl = authentikHost
+      ? `${authentikHost}/application/o/reminder-mcp/end-session/`
+      : '';
+    indexHtml = raw.replace(
+      '</head>',
+      `<script>window.__AUTHENTIK_LOGOUT_URL__ = "${logoutUrl}";</script></head>`
+    );
+  } catch {
+    // Will fall back to sendFile below
+  }
+
+  // SPA fallback (Express 5 requires named catch-all)
+  app.get('{*path}', (_req, res) => {
+    if (indexHtml) {
+      res.setHeader('Content-Type', 'text/html');
+      res.send(indexHtml);
+    } else {
+      res.sendFile(indexPath);
+    }
+  });
+}
+
 async function main(): Promise<void> {
   // Run database migrations
   console.log('Running database migrations...');
@@ -119,10 +176,9 @@ async function main(): Promise<void> {
   app.listen(port, host, () => {
     console.log(`Reminder MCP server running at http://${host}:${port}`);
     console.log(`MCP endpoint: http://${host}:${port}/mcp`);
-    if (config.server.apiKey) {
-      console.log('API key authentication enabled');
-    } else {
-      console.log('WARNING: No API key configured - server is open');
+    console.log(`API endpoint: http://${host}:${port}/api`);
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Serving frontend from frontend/dist');
     }
   });
 }

@@ -1,155 +1,92 @@
 # Reminder MCP Server
 
-An MCP (Model Context Protocol) server that provides scheduled reminders, passive memory, task tracking, and activity history for AI assistants. Built for [Poke](https://poke.com) and any MCP-compatible client.
+An MCP (Model Context Protocol) server that gives AI assistants reliable reminders, persistent memory, task tracking, and activity history. Built for [Poke](https://poke.com) (an iMessage AI bot) and compatible with any MCP client.
+
+## Description
+
+Poke is a great AI assistant, but its built-in reminders, tasks, and memory features had reliability issues. Rather than wait for fixes, I built this MCP server with the help of [Claude Code](https://claude.ai/claude-code) to handle those capabilities myself. The result is a self-hosted stack that makes Poke (and any MCP-compatible client) significantly more useful.
+
+The server exposes 15 MCP tools over Streamable HTTP, backed by a multi-user web dashboard for managing everything through a browser. It supports SQLite for simple setups and PostgreSQL for production, with optional Authentik SSO integration.
 
 ## Features
 
-### Scheduled Reminders
-Time-based notifications with full timezone support. Supports natural language like "tomorrow at 2pm" or "in 30 minutes". When a reminder triggers, a webhook notification is sent to your configured endpoint (e.g., Poke).
+- **Scheduled Reminders** — Time-based notifications with natural language parsing ("tomorrow at 2pm", "in 30 minutes"). Webhook push notifications when reminders trigger.
+- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search.
+- **Task Tracking** — Long-running tasks with configurable check-in intervals (default 5 min). Periodic webhook notifications until completion.
+- **Activity History** — Full audit log of all events. Query by time range, type, and action with day/week/month summaries.
+- **Web Dashboard** — React frontend with stat cards, 30-day activity charts (Recharts), calendar view for reminders, and searchable memory list.
+- **Multi-User** — Per-user data isolation. MCP clients authenticate via API keys, the web frontend uses JWT cookies. First user is auto-promoted to admin.
+- **SSO Integration** — Optional Authentik forward auth via Traefik. Users are auto-created on first SSO login.
+- **API Key Management** — Create and revoke API keys from the web UI. Keys are SHA-256 hashed (never stored in plaintext).
+- **Admin Panel** — User management with admin role toggle. Full database backup (`.json.gz` download) and restore.
+- **Dark Mode** — System preference detection with manual light/dark/system toggle.
+- **Dual Database Support** — SQLite for development and simple deployments, PostgreSQL for production.
+- **Webhook Notifications** — Push notifications to Poke (or any endpoint) when reminders trigger or tasks need check-ins.
 
-### Passive Memory
-Store information for on-demand recall. Perfect for "remember this for later" use cases with optional tagging for organization.
+## Why This Project Is Useful
 
-### Task Tracking
-Long-running tasks with configurable check-in intervals. The server sends periodic webhook notifications (default every 5 minutes) until the task is marked complete.
+- **Poke's built-in features are unreliable** — Reminders don't always fire, memory is inconsistent, and task tracking is limited. This server replaces all of that with a robust, self-hosted alternative.
+- **Works with any MCP client** — Not locked into Poke. Works with Claude Desktop, any MCP-compatible tool, or the included web dashboard.
+- **You own your data** — Self-hosted with full backup/restore. No vendor lock-in, no third-party data storage.
+- **Multi-user ready** — Supports multiple users with data isolation, SSO, and admin controls. Run it for yourself or share it with others.
+- **Production-grade** — PostgreSQL, Docker, health checks, Traefik integration, and Authentik SSO. Not a toy — this runs in production.
 
-### Activity History
-Full audit log of all events. Query what happened over any time period with summaries by day, week, or month.
+## MCP Tools (15)
 
-### Webhook Notifications
-Push notifications via webhook when reminders trigger or tasks need check-ins. Compatible with Poke's inbound webhook API.
+| Tool | Description |
+|------|-------------|
+| `create_reminder` | Schedule a reminder (supports natural language times) |
+| `list_reminders` | List pending or all reminders |
+| `complete_reminder` | Mark a reminder as completed |
+| `cancel_reminder` | Cancel a pending reminder |
+| `remember` | Store something to recall later (with optional tags) |
+| `recall` | Retrieve stored memories (with search/tag filter) |
+| `forget` | Remove a memory item |
+| `start_task` | Begin tracking a long-running task |
+| `check_task` | Get status of a specific task |
+| `list_tasks` | List tasks with optional status filter |
+| `complete_task` | Mark a task as completed |
+| `update_task` | Update task status or add notes |
+| `get_pending_checkups` | Get all due reminders and tasks needing check-in |
+| `get_activity` | Query activity history by time range |
+| `get_summary` | Get summary of recent activity |
 
-## MCP Tools
+## Getting Started
 
-- `create_reminder` - Schedule a reminder for a specific time (supports natural language like "tomorrow at 2pm")
-- `list_reminders` - Get pending/all reminders for a user
-- `complete_reminder` - Mark a reminder as completed
-- `cancel_reminder` - Cancel a pending reminder
-- `remember` - Store something to recall later (passive memory, with optional tags)
-- `recall` - Retrieve stored memories with optional search/tag filter
-- `forget` - Remove a memory item
-- `start_task` - Begin tracking a long-running task with periodic check-ins (default 5 min)
-- `check_task` - Get status of a specific task
-- `list_tasks` - List all tasks with optional status filter
-- `complete_task` - Mark a task as completed
-- `update_task` - Update task status or add notes
-- `get_pending_checkups` - Get all due reminders and tasks needing check-in
-- `get_activity` - Query activity history by time range, type, action
-- `get_summary` - Get summary of recent activity (day/week/month)
+### Option 1: Standalone with SQLite
 
-## Installation
+The simplest setup — no external database required.
 
 ```bash
+# Clone and build
 git clone https://github.com/sj7trunks/reminder-mcp.git
 cd reminder-mcp
 npm install
 npm run build
-```
 
-## Configuration
-
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
-
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PORT` | No | `3000` | HTTP server port |
-| `HOST` | No | `0.0.0.0` | HTTP server host |
-| `API_KEY` | Yes (HTTP) | - | API key for authentication |
-| `DATABASE_TYPE` | No | `sqlite` | `sqlite` or `postgres` |
-| `DATABASE_PATH` | No | `./data/reminder.db` | Path to SQLite database |
-| `DATABASE_URL` | No | - | PostgreSQL connection string |
-| `REDIS_URL` | No | - | Redis URL for Bull queue (optional) |
-| `WEBHOOK_URL` | No | - | Webhook URL for push notifications |
-| `WEBHOOK_API_KEY` | No | - | API key for webhook authentication (sent as Bearer token) |
-| `DEFAULT_TIMEZONE` | No | `America/Los_Angeles` | Default timezone for reminders |
-| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-
-## Usage
-
-### Running Modes
-
-| Mode | Command | Use Case |
-|------|---------|----------|
-| **stdio** | `npm run start` | Local tools (Claude Desktop) |
-| **HTTP** | `npm run start:http` | Remote clients (Poke, web apps) |
-
-### Local Development
-
-```bash
-# stdio mode (for Claude Desktop)
-npm run dev
-
-# HTTP mode (for Poke)
-API_KEY=your-secret-key npm run dev:http
-```
-
-### Production with Docker
-
-```bash
-# 1. Generate an API key
+# Generate secrets
 export API_KEY=$(openssl rand -hex 32)
-echo "Your API key: $API_KEY"
+export SECRET_KEY=$(openssl rand -hex 32)
 
-# 2. Start the server
-docker compose up -d
+# Run in HTTP mode
+API_KEY=$API_KEY SECRET_KEY=$SECRET_KEY npm run start:http
 
-# 3. Check it's running
+# Verify
 curl http://localhost:3000/health
 ```
 
-### Docker Compose Configuration
+The SQLite database is created automatically at `./data/reminder.db`.
 
-Create a `.env` file for docker compose:
-
-```bash
-API_KEY=your-generated-api-key
-DEFAULT_TIMEZONE=America/Los_Angeles
-LOG_LEVEL=info
-WEBHOOK_URL=https://poke.com/api/v1/inbound-sms/webhook
-WEBHOOK_API_KEY=your-poke-api-key
-```
-
-Then run:
-
-```bash
-docker compose up -d
-```
-
-### Transport
-
-This server uses the **Streamable HTTP** transport (MCP spec 2025-03-26). The MCP endpoint is at `/mcp` and accepts JSON-RPC requests via POST.
-
-### Configuring Poke
-
-1. Open Poke app > Settings > Integrations > New Integration
-2. Fill in:
-   - **Name**: `Reminders`
-   - **Server URL**: `https://your-domain.com/mcp`
-   - **API Key**: Your generated API key
-3. Create the integration
-
-To enable push notifications when reminders trigger:
-1. Go to Poke > Settings > Advanced and generate a webhook API key
-2. Set `WEBHOOK_URL=https://poke.com/api/v1/inbound-sms/webhook` and `WEBHOOK_API_KEY=your-poke-key` in your environment
-
-### With Claude Desktop (Local)
-
-For local use with Claude Desktop, use stdio mode. Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+For local use with Claude Desktop (stdio mode), add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "reminder": {
       "command": "node",
-      "args": ["/absolute/path/to/reminder-mcp/dist/index.js"],
+      "args": ["/path/to/reminder-mcp/dist/index.js"],
       "env": {
-        "DATABASE_PATH": "/absolute/path/to/reminder-mcp/data/reminder.db",
+        "DATABASE_PATH": "/path/to/reminder-mcp/data/reminder.db",
         "DEFAULT_TIMEZONE": "America/Los_Angeles"
       }
     }
@@ -157,84 +94,206 @@ For local use with Claude Desktop, use stdio mode. Add to `~/Library/Application
 }
 ```
 
-## How Notifications Work
-
-The server runs a background scheduler every 60 seconds that checks for:
-
-1. **Due reminders** - Reminders whose `due_at` time has passed. When found, the reminder is marked as `triggered` and a webhook notification is sent.
-2. **Task check-ins** - Tasks whose `next_check_at` time has passed. A webhook notification is sent and the next check-in is scheduled based on the task's `check_interval_ms` (default 5 minutes).
-
-If `WEBHOOK_URL` is configured, notifications are sent as:
-
-```
-POST {WEBHOOK_URL}
-Authorization: Bearer {WEBHOOK_API_KEY}
-Content-Type: application/json
-
-{"message": "Reminder title: Your reminder is due"}
-```
-
-If no webhook is configured, notifications are logged to the console.
-
-## Database Schema
-
-### reminders
-`id` (UUID), `user_id`, `title`, `description`, `due_at` (UTC), `timezone`, `status` (pending/triggered/completed/cancelled), `created_at`
-
-### memories
-`id` (UUID), `user_id`, `content`, `tags` (JSON), `recalled_count`, `created_at`
-
-### tasks
-`id` (UUID), `user_id`, `title`, `command`, `status` (pending/in_progress/completed/failed), `check_interval_ms`, `last_check_at`, `next_check_at`, `created_at`, `completed_at`
-
-### activities
-`id` (UUID), `user_id`, `type` (reminder/memory/task/query), `action`, `entity_id`, `metadata` (JSON), `created_at`
-
-## Development
-
-### Database Migrations
+### Option 2: Production with PostgreSQL & Docker
 
 ```bash
-npm run migrate              # Run migrations
-npm run migrate:make -- name # Create new migration
-npm run migrate:rollback     # Rollback
+# Generate secrets
+export API_KEY=$(openssl rand -hex 32)
+export SECRET_KEY=$(openssl rand -hex 32)
+export PG_PASSWORD=$(openssl rand -hex 16)
+
+echo "Save these values:"
+echo "  API_KEY=$API_KEY"
+echo "  SECRET_KEY=$SECRET_KEY"
+echo "  PG_PASSWORD=$PG_PASSWORD"
 ```
 
-### Project Structure
+Add to your `docker-compose.yml`:
+
+```yaml
+services:
+  reminder-mcp-postgres:
+    image: postgres:16-alpine
+    container_name: reminder-mcp-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=reminder
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+      - POSTGRES_DB=reminder_mcp
+    volumes:
+      - reminder-mcp-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reminder -d reminder_mcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  reminder-mcp:
+    build:
+      context: ./reminder-mcp
+      dockerfile: Dockerfile
+    container_name: reminder-mcp
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - API_KEY=${API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_TYPE=postgres
+      - DATABASE_URL=postgresql://reminder:${PG_PASSWORD}@reminder-mcp-postgres:5432/reminder_mcp
+      - DEFAULT_TIMEZONE=America/Los_Angeles
+      # Optional: Push notifications
+      # - WEBHOOK_URL=https://poke.com/api/v1/inbound-sms/webhook
+      # - WEBHOOK_API_KEY=your-poke-api-key
+      # Optional: Authentik SSO
+      # - AUTHENTIK_HOST=https://your-authentik-domain.com
+    depends_on:
+      reminder-mcp-postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  reminder-mcp-pg-data:
+    driver: local
+```
+
+```bash
+docker compose up -d
+curl http://localhost:3000/health
+```
+
+### Configuring Poke
+
+1. Open Poke > Settings > Integrations > New Integration
+2. Fill in:
+   - **Name**: `Reminders`
+   - **Server URL**: `https://your-domain.com/mcp`
+   - **API Key**: Your generated API key
+3. Create the integration
+
+For push notifications (so Poke messages you when reminders trigger):
+1. Go to Poke > Settings > Advanced and generate a webhook API key
+2. Set `WEBHOOK_URL` and `WEBHOOK_API_KEY` in your environment
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_KEY` | Yes (HTTP) | - | Seed API key (hashed on first run) |
+| `SECRET_KEY` | Yes | - | JWT signing secret |
+| `PORT` | No | `3000` | HTTP server port |
+| `HOST` | No | `0.0.0.0` | HTTP server bind address |
+| `DATABASE_TYPE` | No | `sqlite` | `sqlite` or `postgres` |
+| `DATABASE_PATH` | No | `./data/reminder.db` | SQLite file path |
+| `DATABASE_URL` | No | - | PostgreSQL connection string |
+| `DEFAULT_TIMEZONE` | No | `America/Los_Angeles` | Default timezone |
+| `WEBHOOK_URL` | No | - | Push notification endpoint |
+| `WEBHOOK_API_KEY` | No | - | Bearer token for webhook |
+| `AUTHENTIK_HOST` | No | - | Authentik base URL for SSO |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
+
+## Project Structure
 
 ```
-src/
-├── index.ts              # stdio transport (Claude Desktop)
-├── http.ts               # Streamable HTTP transport (Poke)
-├── server.ts             # MCP server, tool registration
-├── config/
-│   └── index.ts          # Environment configuration
-├── db/
-│   ├── index.ts          # Knex connection
-│   ├── migrations/       # Database migrations
-│   └── models/           # TypeScript types & Zod schemas
-├── services/
-│   ├── scheduler.ts      # Background job scheduler
-│   ├── notifier.ts       # Webhook notifications
-│   └── timezone.ts       # Timezone utilities
-├── tools/
-│   ├── reminders.ts      # Reminder CRUD
-│   ├── memory.ts         # Memory CRUD
-│   ├── tasks.ts          # Task tracking
-│   └── history.ts        # Activity queries
-└── resources/
-    └── status.ts         # Server status resource
+reminder-mcp/
+├── src/
+│   ├── index.ts              # stdio transport entry point
+│   ├── http.ts               # HTTP transport entry point (Express app)
+│   ├── server.ts             # MCP server & tool registration
+│   ├── config/
+│   │   └── index.ts          # Zod-validated environment config
+│   ├── db/
+│   │   ├── index.ts          # Knex connection (SQLite/PostgreSQL)
+│   │   ├── migrations/       # Database migrations (001-008)
+│   │   └── models/           # Zod schemas (User, ApiKey, Reminder, etc.)
+│   ├── middleware/
+│   │   └── auth.ts           # JWT, API key, Authentik SSO middleware
+│   ├── routes/
+│   │   ├── auth.ts           # Register, login, logout, session
+│   │   ├── keys.ts           # API key management
+│   │   ├── reminders.ts      # Reminder CRUD
+│   │   ├── memories.ts       # Memory CRUD with search
+│   │   ├── tasks.ts          # Task CRUD
+│   │   ├── stats.ts          # Dashboard statistics
+│   │   └── admin.ts          # User management, backup/restore
+│   ├── services/
+│   │   ├── scheduler.ts      # Background job scheduler (60s poll)
+│   │   ├── notifier.ts       # Webhook notifications (Poke format)
+│   │   └── timezone.ts       # Timezone conversion & parsing
+│   ├── tools/
+│   │   ├── reminders.ts      # Reminder MCP tools
+│   │   ├── memory.ts         # Memory MCP tools
+│   │   ├── tasks.ts          # Task MCP tools
+│   │   └── history.ts        # Activity query tools
+│   └── resources/
+│       └── status.ts         # Server status resource
+├── frontend/
+│   ├── src/
+│   │   ├── main.tsx          # React entry point
+│   │   ├── App.tsx           # Router with auth guards
+│   │   ├── api/client.ts     # API client (fetch + credentials)
+│   │   ├── components/
+│   │   │   └── Layout.tsx    # App shell with nav & theme toggle
+│   │   ├── contexts/
+│   │   │   └── ThemeContext.tsx  # Dark/light/system theme
+│   │   └── pages/
+│   │       ├── Login.tsx     # Login form + SSO button
+│   │       ├── Register.tsx  # Registration form
+│   │       ├── Dashboard.tsx # Stats + activity chart
+│   │       ├── Reminders.tsx # Calendar view
+│   │       ├── Memories.tsx  # Searchable memory list
+│   │       ├── Settings.tsx  # API keys + theme
+│   │       └── Admin.tsx     # User mgmt + backup/restore
+│   ├── vite.config.ts        # Vite config with dev proxy
+│   └── tailwind.config.js    # Tailwind CSS config
+├── Dockerfile                # Multi-stage Docker build
+├── docker-compose.yml        # Standalone Docker setup
+├── .env.example              # Environment variable template
+├── CLAUDE.md                 # Development guide for AI assistants
+└── LICENSE                   # MIT License
 ```
 
 ## Tech Stack
 
-- **Runtime**: Node.js with TypeScript (ESM)
-- **MCP SDK**: `@modelcontextprotocol/sdk` (Streamable HTTP transport)
-- **HTTP Server**: Express.js
-- **Database**: Knex.js with SQLite (dev) / PostgreSQL (prod)
-- **Validation**: Zod
-- **Timezone**: date-fns + date-fns-tz
+- **Runtime**: Node.js 20 + TypeScript (ESM)
+- **MCP**: `@modelcontextprotocol/sdk` (Streamable HTTP transport)
+- **Backend**: Express 5, Knex.js, Zod
+- **Frontend**: React 18, Vite, Tailwind CSS, React Query, Recharts
+- **Database**: SQLite (better-sqlite3) or PostgreSQL
+- **Auth**: JWT (jsonwebtoken), bcrypt, SHA-256 API key hashing
+- **SSO**: Authentik forward auth via Traefik
+
+## Getting Help
+
+If you encounter issues or have questions:
+
+- [Open an Issue](https://github.com/sj7trunks/reminder-mcp/issues) — Bug reports and feature requests
+- [Discussions](https://github.com/sj7trunks/reminder-mcp/discussions) — Questions and general discussion
+
+## Credits
+
+Built by [Benjamin Coles](https://github.com/sj7trunks) with [Claude Code](https://claude.ai/claude-code).
 
 ## License
 
-MIT - see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE).
+
+## Security Notice
+
+This project was built as a personal tool and has not undergone a formal security audit. If you deploy this in production:
+
+- Generate strong, unique values for `API_KEY` and `SECRET_KEY` (`openssl rand -hex 32`)
+- Use HTTPS (TLS) for all traffic — never expose the API over plain HTTP
+- Review the authentication middleware (`src/middleware/auth.ts`) for your threat model
+- Keep dependencies updated (`npm audit`)
+- Consider network-level access controls (firewall rules, VPN) in addition to application-level auth
+- The admin backup/restore endpoints can export and overwrite all data — restrict admin access carefully

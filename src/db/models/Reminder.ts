@@ -9,7 +9,6 @@ export const ReminderSchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   due_at: z.coerce.date(),
-  timezone: z.string(),
   status: ReminderStatus,
   created_at: z.coerce.date(),
 });
@@ -21,7 +20,7 @@ export const CreateReminderInput = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   due_at: z.string().or(z.date()),
-  timezone: z.string().default('UTC'),
+  timezone: z.string().optional(),
 });
 
 export type CreateReminderInput = z.infer<typeof CreateReminderInput>;

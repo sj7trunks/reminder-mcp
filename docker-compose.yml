@@ -9,10 +9,18 @@ services:
       # Server configuration
       - PORT=3000
       - HOST=0.0.0.0
+      - NODE_ENV=production
 
-      # REQUIRED: Set your API key for authentication
+      # REQUIRED: API key for MCP endpoint authentication
       # Generate one with: openssl rand -hex 32
       - API_KEY=${API_KEY:-}
+
+      # REQUIRED: JWT signing secret
+      # Generate one with: openssl rand -hex 32
+      - SECRET_KEY=${SECRET_KEY:-}
+
+      # Authentik SSO (optional)
+      - AUTHENTIK_HOST=${AUTHENTIK_HOST:-https://idp.pendulus.net}
 
       # Database (SQLite by default, stored in volume)
       - DATABASE_TYPE=sqlite
@@ -37,6 +45,24 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+    labels:
+      # Traefik: MCP, health, and API endpoints bypass Authentik forward auth (priority 200)
+      # /api handles its own JWT auth; /mcp handles its own API key auth
+      - "traefik.enable=true"
+      - "traefik.http.routers.reminder-mcp-api.rule=Host(`reminder-mcp.pendulus.net`) && (PathPrefix(`/mcp`) || PathPrefix(`/health`) || PathPrefix(`/api`))"
+      - "traefik.http.routers.reminder-mcp-api.priority=200"
+      - "traefik.http.routers.reminder-mcp-api.entrypoints=websecure"
+      - "traefik.http.routers.reminder-mcp-api.tls.certresolver=letsencrypt"
+
+      # Traefik: Web UI with Authentik forward auth (priority 100)
+      - "traefik.http.routers.reminder-mcp-web.rule=Host(`reminder-mcp.pendulus.net`)"
+      - "traefik.http.routers.reminder-mcp-web.priority=100"
+      - "traefik.http.routers.reminder-mcp-web.entrypoints=websecure"
+      - "traefik.http.routers.reminder-mcp-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.reminder-mcp-web.middlewares=authentik-forward-auth"
+
+      - "traefik.http.services.reminder-mcp.loadbalancer.server.port=3000"
 
 volumes:
   reminder-data:

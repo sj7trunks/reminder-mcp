@@ -17,6 +17,10 @@ const configSchema = z.object({
     port: z.number().default(3000),
     host: z.string().default('0.0.0.0'),
     apiKey: z.string().optional(),
+    secretKey: z.string().optional(),
+  }),
+  authentik: z.object({
+    host: z.string().optional(),
   }),
   defaultTimezone: z.string().default('America/Los_Angeles'),
   logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -42,6 +46,10 @@ export function loadConfig(): Config {
       port: parseInt(process.env.PORT || '3000', 10),
       host: process.env.HOST || '0.0.0.0',
       apiKey: process.env.API_KEY,
+      secretKey: process.env.SECRET_KEY,
+    },
+    authentik: {
+      host: process.env.AUTHENTIK_HOST,
     },
     defaultTimezone: process.env.DEFAULT_TIMEZONE || 'America/Los_Angeles',
     logLevel: (process.env.LOG_LEVEL as Config['logLevel']) || 'info',

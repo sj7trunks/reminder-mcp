@@ -5,38 +5,29 @@ import { v4 as uuid } from 'uuid';
 interface PendingCheckup {
   type: 'reminder' | 'task';
   id: string;
-  user_id: string;
   title: string;
   due_at?: Date;
   last_check_at?: Date;
   metadata: Record<string, unknown>;
 }
 
-export async function getPendingCheckups(userId?: string): Promise<PendingCheckup[]> {
+export async function getPendingCheckups(): Promise<PendingCheckup[]> {
   const now = new Date();
   const checkups: PendingCheckup[] = [];
 
   // Get due reminders
-  let reminderQuery = db('reminders')
+  const dueReminders = await db('reminders')
     .where('status', 'pending')
     .where('due_at', '<=', now.toISOString());
-
-  if (userId) {
-    reminderQuery = reminderQuery.where('user_id', userId);
-  }
-
-  const dueReminders = await reminderQuery;
 
   for (const reminder of dueReminders) {
     checkups.push({
       type: 'reminder',
       id: reminder.id,
-      user_id: reminder.user_id,
       title: reminder.title,
       due_at: new Date(reminder.due_at),
       metadata: {
         description: reminder.description,
-        timezone: reminder.timezone,
       },
     });
 
@@ -65,21 +56,14 @@ export async function getPendingCheckups(userId?: string): Promise<PendingChecku
   }
 
   // Get tasks needing check-in
-  let taskQuery = db('tasks')
+  const dueTasks = await db('tasks')
     .whereIn('status', ['pending', 'in_progress'])
     .where('next_check_at', '<=', now.toISOString());
-
-  if (userId) {
-    taskQuery = taskQuery.where('user_id', userId);
-  }
-
-  const dueTasks = await taskQuery;
 
   for (const task of dueTasks) {
     checkups.push({
       type: 'task',
       id: task.id,
-      user_id: task.user_id,
       title: task.title,
       last_check_at: task.last_check_at ? new Date(task.last_check_at) : undefined,
       metadata: {

@@ -3,12 +3,17 @@ node_modules/
 
 # Build output
 dist/
+frontend/dist/
 
 # Database
 data/
+*.db
+*.sqlite
 
 # Environment
 .env
+.env.local
+.env.production
 
 # IDE
 .idea/
@@ -23,3 +28,13 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Docker data (volumes, pg-data)
+pg-data/
+
+# Backups
+*.json.gz
+
+# Credentials
+*.pem
+*.key

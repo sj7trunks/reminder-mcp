@@ -1,5 +1,16 @@
-# Build stage
-FROM node:20-alpine AS builder
+# Stage 1: Build frontend
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Build server
+FROM node:20-alpine AS server-builder
 
 WORKDIR /app
 
@@ -19,7 +30,7 @@ COPY src/ ./src/
 # Build TypeScript
 RUN npm run build
 
-# Production stage
+# Stage 3: Production
 FROM node:20-alpine
 
 WORKDIR /app
@@ -36,11 +47,11 @@ RUN npm ci --omit=dev && \
     apk del python3 make g++ && \
     rm -rf /root/.npm /tmp/*
 
-# Copy built files from builder
-COPY --from=builder /app/dist ./dist
+# Copy built server files
+COPY --from=server-builder /app/dist ./dist
 
-# Copy migrations (needed at runtime)
-COPY --from=builder /app/dist/db/migrations ./dist/db/migrations
+# Copy built frontend files
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Create data directory
 RUN mkdir -p /app/data && chown -R node:node /app/data
@@ -50,6 +61,8 @@ USER node
 
 # Expose port
 EXPOSE 3000
+
+ENV NODE_ENV=production
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

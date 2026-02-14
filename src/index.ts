@@ -11,8 +11,8 @@ async function main(): Promise<void> {
   await runMigrations();
   console.error('Migrations complete');
 
-  // Create MCP server
-  const server = createServer();
+  // Create MCP server (stdio mode uses 'owner' as default user for backward compatibility)
+  const server = createServer('owner');
 
   // Create stdio transport
   const transport = new StdioServerTransport();

@@ -4,7 +4,7 @@ This file provides context for AI assistants working on this codebase.
 
 ## Project Overview
 
-This is an MCP (Model Context Protocol) server that provides persistent memory, scheduled reminders, task tracking, and activity history. It's designed primarily for Poke (an iMessage bot) but works with any MCP-compatible client.
+Multi-user MCP (Model Context Protocol) server with a React web frontend. Provides persistent memory, scheduled reminders, task tracking, and activity history. Designed primarily for Poke (an iMessage AI bot) but works with any MCP-compatible client. Includes a full web dashboard for managing data, API keys, and admin functions.
 
 ## Quick Commands
 
@@ -12,14 +12,11 @@ This is an MCP (Model Context Protocol) server that provides persistent memory, 
 # Development
 npm run dev          # stdio mode (for Claude Desktop)
 npm run dev:http     # HTTP mode (for Poke)
+cd frontend && npm run dev  # Frontend dev server (proxies to :3000)
 
 # Production
 npm run build        # Compile TypeScript
-npm run start        # Run stdio mode
 npm run start:http   # Run HTTP mode
-
-# Database
-npm run migrate      # Run database migrations
 
 # Docker
 docker compose up -d # Run HTTP server in container
@@ -27,262 +24,189 @@ docker compose up -d # Run HTTP server in container
 
 ## Architecture
 
+### Three Concerns, One Express App
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `POST /mcp` | API key (Bearer token, SHA-256 hashed lookup) | MCP protocol for Poke and MCP clients |
+| `/api/*` | JWT cookie | REST API for the React frontend |
+| `/*` | Authentik forward auth (Traefik) | Static React SPA |
+
 ### Entry Points
-- `src/index.ts` - stdio transport entry point (for Claude Desktop)
-- `src/http.ts` - Streamable HTTP transport entry point (for Poke and remote clients)
-- `src/server.ts` - Creates McpServer instance, registers all 15 tools
+- `src/index.ts` - stdio transport (Claude Desktop, local dev)
+- `src/http.ts` - HTTP transport (Poke, web frontend, Docker)
+- `src/server.ts` - `createServer(userId)` — creates per-request MCP server scoped to a user
 
-### Transport Modes
+### Multi-User Model
+- `createServer(userId)` injects the authenticated user's ID into every tool call
+- MCP clients never see or send `user_id` — it's injected server-side from the API key lookup
+- All queries filter by `user_id` for data isolation
+- First user to register or log in via Authentik is auto-promoted to admin
 
-| Mode | File | Use Case | Auth |
-|------|------|----------|------|
-| stdio | `index.ts` | Local CLI tools (Claude Desktop) | None |
-| Streamable HTTP | `http.ts` | Remote clients (Poke) | API Key via `Authorization: Bearer` header |
-
-The HTTP transport uses the **Streamable HTTP** spec (2025-03-26) with a single `/mcp` endpoint that accepts POST requests. This replaced the older SSE transport. The server runs in stateless mode (new MCP server instance per request, shared database).
+### Auth Flows
+- **MCP clients**: `Authorization: Bearer <api-key>` → SHA-256 hash → lookup in `api_keys` table → resolve `user_id`
+- **Web frontend**: JWT cookie set on login/register or Authentik auto-login → `requireAuth` middleware
+- **Authentik SSO**: Traefik forwards `X-authentik-email` header → `authentikAutoLogin` middleware auto-creates user + sets JWT cookie
 
 ### Database Layer
-- Uses Knex.js as query builder
-- SQLite for development, PostgreSQL for production
-- Migrations in `src/db/migrations/` (auto-detects .ts vs .js)
-- Models define Zod schemas for validation
-- The `db` instance is a module-level singleton shared across all requests
+- Knex.js query builder
+- SQLite (`better-sqlite3`) for development
+- PostgreSQL (`pg`) for production
+- Migrations in `src/db/migrations/` (auto-detects .ts vs .js at runtime)
+- Models use Zod schemas in `src/db/models/`
 
 ### Services
-- `scheduler.ts` - Background polling (60s interval) for due reminders/tasks. Sends webhook notifications when items are due.
-- `notifier.ts` - Sends webhook notifications to configured endpoint (e.g., Poke). Formats payload as `{"message": "..."}` with Bearer token auth.
-- `timezone.ts` - Converts between timezones, parses relative times like "tomorrow at 2pm"
-
-### Tools (15 total)
-Each tool file exports:
-1. Zod schemas for input validation
-2. Handler functions that interact with the database
-3. Activity logging for all mutations
-
-**Important**: Handler functions must provide defaults for optional Zod fields since they may be called directly without Zod parsing:
-```typescript
-export async function listReminders(input: z.infer<typeof ListRemindersSchema>) {
-  const status = input.status ?? 'pending';  // Provide default
-  const limit = input.limit ?? 50;           // Provide default
-  // ...
-}
-```
+- `scheduler.ts` - Background polling (60s) for due reminders/tasks, triggers webhook notifications
+- `notifier.ts` - Sends webhooks to Poke (`{"message": "..."}` with Bearer token)
+- `timezone.ts` - Timezone conversion and relative time parsing
 
 ## Key Patterns
 
-### Adding a New Tool
+### Tool Handlers Accept `user_id` as Required Field
+All tool schemas require `user_id: z.string()`. The MCP server injects this from the authenticated user — clients don't provide it. When calling handlers directly (e.g., from REST routes), pass the user ID explicitly.
 
-1. Create schema in the appropriate tool file:
+### Handler Functions Must Provide Defaults for Optional Fields
+Since handlers may be called directly without Zod parsing:
 ```typescript
-export const MyToolSchema = z.object({
-  user_id: z.string(),
-  // ... other fields
-});
-```
-
-2. Create handler function (with inline defaults):
-```typescript
-export async function myTool(input: z.infer<typeof MyToolSchema>) {
-  const optionalField = input.optionalField ?? 'default';
-  // Implementation
-  // Don't forget to log activity
-  await db('activities').insert({...});
-  return { success: true, ... };
+export async function listReminders(input: z.infer<typeof ListRemindersSchema>) {
+  const status = input.status ?? 'pending';
+  const limit = input.limit ?? 50;
 }
 ```
 
-3. Register in `server.ts`:
+### Ownership Validation on Mutations
+Single-entity operations (complete, cancel, delete) must verify ownership:
 ```typescript
-server.tool(
-  'my_tool',
-  'Description of what it does',
-  MyToolSchema.shape,
-  async (args) => {
-    const input = MyToolSchema.parse(args);
-    const result = await myTool(input);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-  }
-);
-```
-
-### Database Queries
-
-Always use Knex query builder, not raw SQL:
-```typescript
-// Good
-const rows = await db('reminders').where('user_id', userId).where('status', 'pending');
-
-// Avoid raw SQL unless necessary
+const row = await db('reminders').where('id', input.reminder_id).where('user_id', input.user_id).first();
+if (!row) return { success: false, error: 'Not found' };
 ```
 
 ### Activity Logging
-
-All mutations should log to the activities table:
-```typescript
-await db('activities').insert({
-  id: uuid(),
-  user_id: input.user_id,
-  type: 'reminder',  // reminder | memory | task | query
-  action: 'created', // created | completed | triggered | recalled | deleted | etc.
-  entity_id: entityId,
-  metadata: JSON.stringify({ ... }),
-  created_at: new Date().toISOString(),
-});
-```
-
-### Timezone Handling
-
-- Store all times as UTC in the database
-- Convert to user timezone only for display
-- Use `parseRelativeTime()` for natural language parsing
-- Always validate timezones with `isValidTimezone()`
-
-### API Key Authentication (HTTP mode)
-
-The HTTP server uses Bearer token authentication:
-```typescript
-// Middleware checks Authorization header
-const apiKey = req.headers.authorization?.slice(7); // Remove "Bearer "
-if (apiKey !== config.server.apiKey) {
-  res.status(401).json({ error: 'Unauthorized' });
-}
-```
-
-### Webhook Notifications
-
-The notifier sends POST requests to `WEBHOOK_URL` with `WEBHOOK_API_KEY` as a Bearer token:
-```typescript
-// Payload format for Poke compatibility
-{ "message": "Reminder title: Your reminder is due" }
-```
+All mutations log to the activities table for the dashboard timeline.
 
 ## Database Schema
 
-### reminders
+### users
 | Column | Type | Notes |
 |--------|------|-------|
 | id | UUID | Primary key |
-| user_id | VARCHAR | Index |
-| title | TEXT | Required |
-| description | TEXT | Optional |
-| due_at | TIMESTAMP | UTC, indexed |
-| timezone | VARCHAR | User's timezone |
-| status | ENUM | pending/triggered/completed/cancelled |
+| email | TEXT | Unique, not null |
+| name | TEXT | Nullable |
+| password_hash | TEXT | Nullable (null for SSO-only users) |
+| is_admin | BOOLEAN | First user auto-promoted |
+| created_at | TIMESTAMP | |
+| updated_at | TIMESTAMP | |
+
+### api_keys
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| user_id | UUID | FK to users, ON DELETE CASCADE |
+| key_hash | TEXT | SHA-256 hex hash, indexed |
+| prefix | VARCHAR(8) | First 8 chars for UI display |
+| name | TEXT | User-given label |
 | created_at | TIMESTAMP | |
 
-### memories
-| Column | Type | Notes |
-|--------|------|-------|
-| id | UUID | Primary key |
-| user_id | VARCHAR | Index |
-| content | TEXT | What to remember |
-| tags | JSON | Array of strings |
-| recalled_count | INT | Times recalled |
-| created_at | TIMESTAMP | |
+### reminders, memories, tasks, activities
+See migration files in `src/db/migrations/` for full schemas. All have `user_id` foreign keys.
 
-### tasks
-| Column | Type | Notes |
-|--------|------|-------|
-| id | UUID | Primary key |
-| user_id | VARCHAR | Index |
-| title | TEXT | Task description |
-| command | TEXT | Original prompt |
-| status | ENUM | pending/in_progress/completed/failed |
-| check_interval_ms | INT | Default 300000 (5 min) |
-| last_check_at | TIMESTAMP | |
-| next_check_at | TIMESTAMP | Indexed for polling |
-| created_at | TIMESTAMP | |
-| completed_at | TIMESTAMP | |
+## REST API Routes
 
-### activities
-| Column | Type | Notes |
-|--------|------|-------|
-| id | UUID | Primary key |
-| user_id | VARCHAR | Index |
-| type | ENUM | reminder/memory/task/query |
-| action | VARCHAR | created/triggered/completed/etc |
-| entity_id | UUID | FK to related entity |
-| metadata | JSON | Additional context |
-| created_at | TIMESTAMP | Indexed |
+| Route File | Prefix | Auth | Purpose |
+|------------|--------|------|---------|
+| `routes/auth.ts` | `/api/auth` | Public (register/login) + JWT (me) | User registration, login, logout |
+| `routes/keys.ts` | `/api/keys` | JWT | API key management (create, list, revoke) |
+| `routes/reminders.ts` | `/api/reminders` | JWT | CRUD with date range queries |
+| `routes/memories.ts` | `/api/memories` | JWT | CRUD with search and tag filtering |
+| `routes/tasks.ts` | `/api/tasks` | JWT | CRUD operations |
+| `routes/stats.ts` | `/api/stats` | JWT | Dashboard data, Recharts-formatted timeline |
+| `routes/admin.ts` | `/api/admin` | JWT + Admin | User management, backup/restore |
 
-## Common Tasks
+### Admin Backup/Restore
+- `GET /api/admin/backup` — Downloads all tables as `.json.gz` (gzipped JSON, Node built-in `zlib`)
+- `POST /api/admin/restore` — Accepts `.json.gz` upload, replaces all data in a transaction
 
-### Adding a New Migration
+## Frontend
 
-```bash
-npm run migrate:make -- descriptive_name
-```
+React 18 + TypeScript + Vite + Tailwind CSS + React Query + Recharts.
 
-Then edit the generated file in `src/db/migrations/`.
+| Page | Purpose |
+|------|---------|
+| `Login.tsx` | Email/password + "Sign in with SSO" |
+| `Register.tsx` | New account registration |
+| `Dashboard.tsx` | Stat cards + 30-day activity chart |
+| `Reminders.tsx` | Calendar grid with day-click to view/add |
+| `Memories.tsx` | Searchable list with tag filters |
+| `Settings.tsx` | API key management + theme toggle |
+| `Admin.tsx` | User list with admin toggle, backup/restore |
 
-### Testing Tools Manually
+Dark mode via `ThemeContext.tsx` — system preference + manual toggle + localStorage.
 
-```bash
-# Test stdio mode
-npx @modelcontextprotocol/inspector node dist/index.js
-
-# Test HTTP mode (Streamable HTTP)
-API_KEY=test-key npm run start:http
-curl -X POST http://localhost:3000/mcp \
-  -H "Authorization: Bearer test-key" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}'
-```
-
-### Testing with the Test Script
-
-```bash
-npx tsx test-tools.ts
-```
-
-### Debugging
-
-- Server logs to stderr (stdout is reserved for MCP protocol in stdio mode)
-- Set `LOG_LEVEL=debug` in .env for verbose output
-- Check `data/reminder.db` with any SQLite viewer
-- Health endpoint: `GET /health` (no auth required)
-- MCP endpoint: `POST /mcp` (auth required)
-
-## Deployment
-
-### Docker
-
-```bash
-# Generate API key
-export API_KEY=$(openssl rand -hex 32)
-
-# Create .env
-echo "API_KEY=$API_KEY" > .env
-
-# Deploy
-docker compose up -d
-```
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `API_KEY` | Yes (HTTP) | - | Authentication key |
-| `PORT` | No | 3000 | HTTP server port |
-| `DATABASE_TYPE` | No | sqlite | sqlite or postgres |
-| `DATABASE_PATH` | No | ./data/reminder.db | SQLite path |
-| `DEFAULT_TIMEZONE` | No | America/Los_Angeles | Default TZ |
-| `WEBHOOK_URL` | No | - | Webhook URL for push notifications |
+| `NODE_ENV` | No | - | Set `production` for static SPA serving |
+| `API_KEY` | Yes (HTTP) | - | Legacy: used only in migration 008 for seeding |
+| `SECRET_KEY` | Yes | `development-secret-key` | JWT signing secret |
+| `AUTHENTIK_HOST` | No | - | Authentik base URL for SSO logout redirect |
+| `DATABASE_TYPE` | No | `sqlite` | `sqlite` or `postgres` |
+| `DATABASE_PATH` | No | `./data/reminder.db` | SQLite file path |
+| `DATABASE_URL` | No | - | PostgreSQL connection string |
+| `DEFAULT_TIMEZONE` | No | `America/Los_Angeles` | Default timezone |
+| `WEBHOOK_URL` | No | - | Webhook for push notifications (Poke) |
 | `WEBHOOK_API_KEY` | No | - | Bearer token for webhook auth |
 
-## Error Handling
+## Docker
 
-- Tool handlers should return `{ success: false, error: "message" }` for expected errors
-- Zod validation errors are automatically handled by the MCP SDK
-- Database errors should be caught and returned as user-friendly messages
+Multi-stage Dockerfile:
+1. **frontend-builder** — `npm ci && npm run build` in `frontend/`
+2. **server-builder** — `npm ci && npm run build` in root
+3. **production** — Copy `dist/` + `frontend/dist/`, run `node dist/http.js`
+
+Production image serves the SPA from `frontend/dist/` with injected Authentik logout URL.
+
+## Known Pitfalls
+
+### Express 5 Wildcard Routes
+Express 5 uses `path-to-regexp` v8 which does NOT support bare `*` wildcards. Use `{*path}` instead:
+```typescript
+// WRONG — crashes at startup
+app.get('*', handler);
+// CORRECT
+app.get('{*path}', handler);
+```
+
+### Express 5 Param Types
+`req.params.id` returns `string | string[]` in Express 5. Always cast: `req.params.id as string`.
+
+### Express 5 Query Types
+`req.query.foo` returns `string | string[] | undefined`. Use explicit casts: `req.query.foo as string | undefined`.
+
+### Authentik Cookie Timing
+When `authentikAutoLogin` sets a JWT cookie via `res.cookie()`, it's NOT available in `req.cookies` on the same request. Must also inject: `req.cookies.token = token`.
+
+### Authentik Middleware Placement
+`authentikAutoLogin` must run globally (`app.use(authentikAutoLogin)`) BEFORE route handlers, not scoped to `/api`. Otherwise the first page load to `/` won't set the JWT cookie.
+
+### Traefik Priority Routing
+- **Priority 200**: `/mcp`, `/health`, `/api` — bypass Authentik forward auth (these handle their own auth)
+- **Priority 100**: Everything else — Authentik forward auth for the SPA
+If `/api` routes go through Authentik, login/register endpoints break and fetch calls get HTML redirects instead of JSON.
+
+### Migration 008 on Fresh Databases
+Migration 008 only seeds data when existing records exist (reminders/memories/tasks). On a fresh database it's a no-op, so the first user to register or SSO in becomes admin automatically.
+
+### Knex Row Types
+Knex returns `Record<string, unknown>` rows. Always cast fields: `row.id as string`, `row.is_admin === true || row.is_admin === 1` (SQLite returns 0/1, PostgreSQL returns boolean).
 
 ## Testing Checklist
 
 Before deploying changes:
-1. [ ] `npm run build` succeeds without errors
-2. [ ] `npx tsx test-tools.ts` passes
-3. [ ] Migrations run cleanly on fresh database
-4. [ ] Test modified tools with MCP Inspector
-5. [ ] Verify activity logging works
-6. [ ] Test HTTP mode with API key auth
-7. [ ] Check timezone handling with various inputs
+1. `npx tsc --noEmit` — backend compiles
+2. `cd frontend && npx tsc --noEmit` — frontend compiles
+3. `docker compose build` — Docker image builds
+4. Migrations run cleanly on fresh database
+5. Verify MCP endpoint with API key auth
+6. Verify web frontend login flow
+7. Test backup/restore round-trip

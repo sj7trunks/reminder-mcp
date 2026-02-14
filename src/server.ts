@@ -43,7 +43,24 @@ import {
 import { getPendingCheckups } from './services/scheduler.js';
 import { getServerStatus } from './resources/status.js';
 
-export function createServer(): McpServer {
+// Strip user_id from response objects — the API key already identifies the user
+function stripUserId(obj: unknown): unknown {
+  if (Array.isArray(obj)) return obj.map(stripUserId);
+  if (obj instanceof Date) return obj;
+  if (obj && typeof obj === 'object') {
+    const { user_id, ...rest } = obj as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(rest).map(([k, v]) => [k, stripUserId(v)])
+    );
+  }
+  return obj;
+}
+
+function toResponse(result: unknown): { content: [{ type: 'text'; text: string }] } {
+  return { content: [{ type: 'text', text: JSON.stringify(stripUserId(result), null, 2) }] };
+}
+
+export function createServer(userId: string): McpServer {
   const server = new McpServer({
     name: 'reminder-mcp',
     version: '1.0.0',
@@ -54,26 +71,30 @@ export function createServer(): McpServer {
   server.tool(
     'create_reminder',
     'Schedule a reminder for a specific time',
-    CreateReminderSchema.shape,
+    {
+      title: CreateReminderSchema.shape.title,
+      description: CreateReminderSchema.shape.description,
+      due_at: CreateReminderSchema.shape.due_at,
+      timezone: CreateReminderSchema.shape.timezone,
+    },
     async (args) => {
-      const input = CreateReminderSchema.parse(args);
+      const input = CreateReminderSchema.parse({ ...args, user_id: userId });
       const result = await createReminder(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
   server.tool(
     'list_reminders',
     'Get pending or all reminders for a user',
-    ListRemindersSchema.shape,
+    {
+      status: ListRemindersSchema.shape.status,
+      limit: ListRemindersSchema.shape.limit,
+    },
     async (args) => {
-      const input = ListRemindersSchema.parse(args);
+      const input = ListRemindersSchema.parse({ ...args, user_id: userId });
       const result = await listReminders(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
@@ -83,10 +104,8 @@ export function createServer(): McpServer {
     ReminderIdSchema.shape,
     async (args) => {
       const input = ReminderIdSchema.parse(args);
-      const result = await completeReminder(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await completeReminder({ ...input, user_id: userId });
+      return toResponse(result);
     }
   );
 
@@ -96,10 +115,8 @@ export function createServer(): McpServer {
     ReminderIdSchema.shape,
     async (args) => {
       const input = ReminderIdSchema.parse(args);
-      const result = await cancelReminder(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await cancelReminder({ ...input, user_id: userId });
+      return toResponse(result);
     }
   );
 
@@ -108,26 +125,29 @@ export function createServer(): McpServer {
   server.tool(
     'remember',
     'Store something to recall later (passive memory)',
-    RememberSchema.shape,
+    {
+      content: RememberSchema.shape.content,
+      tags: RememberSchema.shape.tags,
+    },
     async (args) => {
-      const input = RememberSchema.parse(args);
+      const input = RememberSchema.parse({ ...args, user_id: userId });
       const result = await remember(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
   server.tool(
     'recall',
     'Get all stored memories with optional filter',
-    RecallSchema.shape,
+    {
+      query: RecallSchema.shape.query,
+      tags: RecallSchema.shape.tags,
+      limit: RecallSchema.shape.limit,
+    },
     async (args) => {
-      const input = RecallSchema.parse(args);
+      const input = RecallSchema.parse({ ...args, user_id: userId });
       const result = await recall(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
@@ -137,10 +157,8 @@ export function createServer(): McpServer {
     ForgetSchema.shape,
     async (args) => {
       const input = ForgetSchema.parse(args);
-      const result = await forget(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await forget({ ...input, user_id: userId });
+      return toResponse(result);
     }
   );
 
@@ -149,13 +167,15 @@ export function createServer(): McpServer {
   server.tool(
     'start_task',
     'Begin tracking a long-running task with periodic check-ins',
-    StartTaskSchema.shape,
+    {
+      title: StartTaskSchema.shape.title,
+      command: StartTaskSchema.shape.command,
+      check_interval_ms: StartTaskSchema.shape.check_interval_ms,
+    },
     async (args) => {
-      const input = StartTaskSchema.parse(args);
+      const input = StartTaskSchema.parse({ ...args, user_id: userId });
       const result = await startTask(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
@@ -165,23 +185,22 @@ export function createServer(): McpServer {
     TaskIdSchema.shape,
     async (args) => {
       const input = TaskIdSchema.parse(args);
-      const result = await checkTask(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await checkTask({ ...input, user_id: userId });
+      return toResponse(result);
     }
   );
 
   server.tool(
     'list_tasks',
     'List all tasks for a user with optional status filter',
-    ListTasksSchema.shape,
+    {
+      status: ListTasksSchema.shape.status,
+      limit: ListTasksSchema.shape.limit,
+    },
     async (args) => {
-      const input = ListTasksSchema.parse(args);
+      const input = ListTasksSchema.parse({ ...args, user_id: userId });
       const result = await listTasks(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
@@ -191,10 +210,8 @@ export function createServer(): McpServer {
     TaskIdSchema.shape,
     async (args) => {
       const input = TaskIdSchema.parse(args);
-      const result = await completeTask(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await completeTask({ ...input, user_id: userId });
+      return toResponse(result);
     }
   );
 
@@ -204,10 +221,8 @@ export function createServer(): McpServer {
     UpdateTaskSchema.shape,
     async (args) => {
       const input = UpdateTaskSchema.parse(args);
-      const result = await updateTask(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await updateTask({ ...input, user_id: userId });
+      return toResponse(result);
     }
   );
 
@@ -216,14 +231,10 @@ export function createServer(): McpServer {
   server.tool(
     'get_pending_checkups',
     'Get all due reminders and tasks needing check-in (call this periodically)',
-    {
-      user_id: z.string().optional().describe('Optional user filter'),
-    },
-    async (args) => {
-      const checkups = await getPendingCheckups(args.user_id);
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ checkups }, null, 2) }],
-      };
+    {},
+    async () => {
+      const checkups = await getPendingCheckups();
+      return toResponse({ checkups });
     }
   );
 
@@ -232,26 +243,30 @@ export function createServer(): McpServer {
   server.tool(
     'get_activity',
     'Query activity history by time range, type, etc.',
-    GetActivitySchema.shape,
+    {
+      type: GetActivitySchema.shape.type,
+      action: GetActivitySchema.shape.action,
+      since: GetActivitySchema.shape.since,
+      until: GetActivitySchema.shape.until,
+      limit: GetActivitySchema.shape.limit,
+    },
     async (args) => {
-      const input = GetActivitySchema.parse(args);
+      const input = GetActivitySchema.parse({ ...args, user_id: userId });
       const result = await getActivity(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 
   server.tool(
     'get_summary',
     'Get summary of recent activity for a user',
-    GetSummarySchema.shape,
+    {
+      period: GetSummarySchema.shape.period,
+    },
     async (args) => {
-      const input = GetSummarySchema.parse(args);
+      const input = GetSummarySchema.parse({ ...args, user_id: userId });
       const result = await getSummary(input);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
+      return toResponse(result);
     }
   );
 

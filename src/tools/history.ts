@@ -4,7 +4,7 @@ import { subDays, subWeeks, subMonths } from 'date-fns';
 import type { Activity } from '../db/models/Activity.js';
 
 export const GetActivitySchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   type: z.enum(['reminder', 'memory', 'task', 'query', 'all']).optional().default('all').describe('Filter by activity type'),
   action: z.string().optional().describe('Filter by action (e.g., created, completed)'),
   since: z.string().optional().describe('Start time (ISO date or relative like "1 week", "3 days")'),
@@ -13,7 +13,7 @@ export const GetActivitySchema = z.object({
 });
 
 export const GetSummarySchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   period: z.enum(['day', 'week', 'month']).optional().default('week').describe('Time period for summary'),
 });
 

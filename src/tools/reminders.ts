@@ -2,19 +2,19 @@ import { z } from 'zod';
 import { v4 as uuid } from 'uuid';
 import { db } from '../db/index.js';
 import { config } from '../config/index.js';
-import { parseRelativeTime, isValidTimezone, formatInTimezone } from '../services/timezone.js';
+import { parseRelativeTime, isValidTimezone } from '../services/timezone.js';
 import type { Reminder } from '../db/models/Reminder.js';
 
 export const CreateReminderSchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   title: z.string().min(1).describe('Reminder title'),
   description: z.string().optional().describe('Optional details'),
   due_at: z.string().describe('When to trigger (ISO date string or relative like "tomorrow at 2pm", "in 30 minutes")'),
-  timezone: z.string().optional().describe('User timezone (defaults to server default)'),
+  timezone: z.string().optional().describe('User timezone for parsing relative times (defaults to server default). Not stored.'),
 });
 
 export const ListRemindersSchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   status: z.enum(['pending', 'triggered', 'completed', 'cancelled', 'all']).optional().default('pending').describe('Filter by status'),
   limit: z.number().optional().default(50).describe('Maximum number of results'),
 });
@@ -50,7 +50,6 @@ export async function createReminder(input: z.infer<typeof CreateReminderSchema>
     title: input.title,
     description: input.description || null,
     due_at: dueAt,
-    timezone,
     status: 'pending',
     created_at: now,
   };
@@ -72,13 +71,7 @@ export async function createReminder(input: z.infer<typeof CreateReminderSchema>
     created_at: now.toISOString(),
   });
 
-  return {
-    success: true,
-    reminder: {
-      ...reminder,
-      due_at: dueAt,
-    },
-  };
+  return { success: true, reminder };
 }
 
 export async function listReminders(input: z.infer<typeof ListRemindersSchema>): Promise<{ reminders: Reminder[] }> {
@@ -99,7 +92,6 @@ export async function listReminders(input: z.infer<typeof ListRemindersSchema>):
     title: row.title as string,
     description: row.description as string | null,
     due_at: new Date(row.due_at as string),
-    timezone: row.timezone as string,
     status: row.status as Reminder['status'],
     created_at: new Date(row.created_at as string),
   }));
@@ -107,8 +99,11 @@ export async function listReminders(input: z.infer<typeof ListRemindersSchema>):
   return { reminders };
 }
 
-export async function completeReminder(input: z.infer<typeof ReminderIdSchema>): Promise<{ success: boolean; error?: string }> {
-  const reminder = await db('reminders').where('id', input.reminder_id).first();
+export async function completeReminder(input: z.infer<typeof ReminderIdSchema> & { user_id: string }): Promise<{ success: boolean; error?: string }> {
+  const reminder = await db('reminders')
+    .where('id', input.reminder_id)
+    .where('user_id', input.user_id)
+    .first();
 
   if (!reminder) {
     return { success: false, error: 'Reminder not found' };
@@ -124,7 +119,7 @@ export async function completeReminder(input: z.infer<typeof ReminderIdSchema>):
 
   await db('activities').insert({
     id: uuid(),
-    user_id: reminder.user_id,
+    user_id: input.user_id,
     type: 'reminder',
     action: 'completed',
     entity_id: input.reminder_id,
@@ -135,8 +130,11 @@ export async function completeReminder(input: z.infer<typeof ReminderIdSchema>):
   return { success: true };
 }
 
-export async function cancelReminder(input: z.infer<typeof ReminderIdSchema>): Promise<{ success: boolean; error?: string }> {
-  const reminder = await db('reminders').where('id', input.reminder_id).first();
+export async function cancelReminder(input: z.infer<typeof ReminderIdSchema> & { user_id: string }): Promise<{ success: boolean; error?: string }> {
+  const reminder = await db('reminders')
+    .where('id', input.reminder_id)
+    .where('user_id', input.user_id)
+    .first();
 
   if (!reminder) {
     return { success: false, error: 'Reminder not found' };
@@ -152,7 +150,7 @@ export async function cancelReminder(input: z.infer<typeof ReminderIdSchema>): P
 
   await db('activities').insert({
     id: uuid(),
-    user_id: reminder.user_id,
+    user_id: input.user_id,
     type: 'reminder',
     action: 'cancelled',
     entity_id: input.reminder_id,

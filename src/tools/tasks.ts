@@ -5,7 +5,7 @@ import { sendNotification } from '../services/notifier.js';
 import type { Task } from '../db/models/Task.js';
 
 export const StartTaskSchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   title: z.string().min(1).describe('Task description'),
   command: z.string().optional().describe('Original command/prompt'),
   check_interval_ms: z.number().positive().optional().default(300000).describe('How often to check (default 5 minutes)'),
@@ -16,7 +16,7 @@ export const TaskIdSchema = z.object({
 });
 
 export const ListTasksSchema = z.object({
-  user_id: z.string().describe('User identifier'),
+  user_id: z.string(),
   status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'all']).optional().default('all').describe('Filter by status'),
   limit: z.number().optional().default(50).describe('Maximum number of results'),
 });
@@ -66,8 +66,11 @@ export async function startTask(input: z.infer<typeof StartTaskSchema>): Promise
   return { success: true, task };
 }
 
-export async function checkTask(input: z.infer<typeof TaskIdSchema>): Promise<{ success: boolean; task?: Task; error?: string }> {
-  const row = await db('tasks').where('id', input.task_id).first();
+export async function checkTask(input: z.infer<typeof TaskIdSchema> & { user_id: string }): Promise<{ success: boolean; task?: Task; error?: string }> {
+  const row = await db('tasks')
+    .where('id', input.task_id)
+    .where('user_id', input.user_id)
+    .first();
 
   if (!row) {
     return { success: false, error: 'Task not found' };
@@ -117,8 +120,11 @@ export async function listTasks(input: z.infer<typeof ListTasksSchema>): Promise
   return { tasks };
 }
 
-export async function completeTask(input: z.infer<typeof TaskIdSchema>): Promise<{ success: boolean; error?: string }> {
-  const task = await db('tasks').where('id', input.task_id).first();
+export async function completeTask(input: z.infer<typeof TaskIdSchema> & { user_id: string }): Promise<{ success: boolean; error?: string }> {
+  const task = await db('tasks')
+    .where('id', input.task_id)
+    .where('user_id', input.user_id)
+    .first();
 
   if (!task) {
     return { success: false, error: 'Task not found' };
@@ -148,7 +154,7 @@ export async function completeTask(input: z.infer<typeof TaskIdSchema>): Promise
   // Log activity
   await db('activities').insert({
     id: uuid(),
-    user_id: task.user_id,
+    user_id: input.user_id,
     type: 'task',
     action: 'completed',
     entity_id: input.task_id,
@@ -159,8 +165,11 @@ export async function completeTask(input: z.infer<typeof TaskIdSchema>): Promise
   return { success: true };
 }
 
-export async function updateTask(input: z.infer<typeof UpdateTaskSchema>): Promise<{ success: boolean; error?: string }> {
-  const task = await db('tasks').where('id', input.task_id).first();
+export async function updateTask(input: z.infer<typeof UpdateTaskSchema> & { user_id: string }): Promise<{ success: boolean; error?: string }> {
+  const task = await db('tasks')
+    .where('id', input.task_id)
+    .where('user_id', input.user_id)
+    .first();
 
   if (!task) {
     return { success: false, error: 'Task not found' };
@@ -184,7 +193,7 @@ export async function updateTask(input: z.infer<typeof UpdateTaskSchema>): Promi
   // Log activity
   await db('activities').insert({
     id: uuid(),
-    user_id: task.user_id,
+    user_id: input.user_id,
     type: 'task',
     action: 'updated',
     entity_id: input.task_id,
