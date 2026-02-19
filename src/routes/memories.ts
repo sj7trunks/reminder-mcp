@@ -9,6 +9,12 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
   try {
     const query = req.query.query as string | undefined;
     const tags = req.query.tags as string | undefined;
+    const embeddingStatusRaw = req.query.embedding_status as string | undefined;
+    const embeddingStatus = embeddingStatusRaw === 'pending'
+      || embeddingStatusRaw === 'completed'
+      || embeddingStatusRaw === 'failed'
+      ? embeddingStatusRaw
+      : undefined;
     const limit = req.query.limit as string | undefined;
     const parsedTags = tags ? tags.split(',') : undefined;
 
@@ -16,6 +22,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       user_id: req.user!.id,
       query,
       tags: parsedTags,
+      embedding_status: embeddingStatus,
       limit: Number(limit) || 50,
     });
     res.json(result);

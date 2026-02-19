@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createServer } from './server.js';
 import { runMigrations, closeDatabase } from './db/index.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
+import { startEmbeddingWorker, stopEmbeddingWorker } from './services/embedding-worker.js';
 
 async function main(): Promise<void> {
   // Run database migrations
@@ -19,11 +20,13 @@ async function main(): Promise<void> {
 
   // Start background scheduler (checks every minute)
   startScheduler(60000);
+  startEmbeddingWorker();
 
   // Handle shutdown
   process.on('SIGINT', async () => {
     console.error('Shutting down...');
     stopScheduler();
+    await stopEmbeddingWorker();
     await closeDatabase();
     process.exit(0);
   });
@@ -31,6 +34,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', async () => {
     console.error('Shutting down...');
     stopScheduler();
+    await stopEmbeddingWorker();
     await closeDatabase();
     process.exit(0);
   });

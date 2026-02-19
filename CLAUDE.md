@@ -59,6 +59,8 @@ docker compose up -d # Run HTTP server in container
 - `scheduler.ts` - Background polling (60s) for due reminders/tasks, triggers webhook notifications
 - `notifier.ts` - Sends webhooks to Poke (`{"message": "..."}` with Bearer token)
 - `timezone.ts` - Timezone conversion and relative time parsing
+- `embedding.ts` - OpenAI text-embedding-3-small integration for semantic search
+- `embedding-worker.ts` - Background worker for generating embeddings on new/updated memories
 
 ## Key Patterns
 
@@ -156,6 +158,8 @@ Dark mode via `ThemeContext.tsx` — system preference + manual toggle + localSt
 | `DEFAULT_TIMEZONE` | No | `America/Los_Angeles` | Default timezone |
 | `WEBHOOK_URL` | No | - | Webhook for push notifications (Poke) |
 | `WEBHOOK_API_KEY` | No | - | Bearer token for webhook auth |
+| `OPENAI_API_KEY` | No | - | OpenAI API key for semantic search (text-embedding-3-small) |
+| `REDIS_URL` | No | - | Redis connection URL for vector storage (semantic search) |
 
 ## Docker
 
@@ -199,6 +203,16 @@ Migration 008 only seeds data when existing records exist (reminders/memories/ta
 
 ### Knex Row Types
 Knex returns `Record<string, unknown>` rows. Always cast fields: `row.id as string`, `row.is_admin === true || row.is_admin === 1` (SQLite returns 0/1, PostgreSQL returns boolean).
+
+### MCP Client Compatibility (Poke)
+The `/mcp` endpoint uses `StreamableHTTPServerTransport` which requires clients to send `Accept: application/json, text/event-stream` headers. Poke and similar clients must be configured to use SSE (Server-Sent Events) format. The server attempts to inject these headers for clients that don't send them, but client-side SSE configuration is more reliable.
+
+### Frontend External Access
+The Vite dev server is configured for external access through reverse proxy:
+- Listens on `0.0.0.0` (all interfaces)
+- Port configurable via `PORT` environment variable
+- API proxy target configurable via `VITE_API_PROXY_TARGET`
+- Allows external domains via `allowedHosts` configuration
 
 ## Testing Checklist
 

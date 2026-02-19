@@ -38,3 +38,7 @@ pg-data/
 # Credentials
 *.pem
 *.key
+
+# Dev host specific scripts
+start-*.sh
+test-mcp-client.js

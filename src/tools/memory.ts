@@ -1,7 +1,11 @@
 import { z } from 'zod';
+import pgvector from 'pgvector';
 import { v4 as uuid } from 'uuid';
 import { db } from '../db/index.js';
+import { config } from '../config/index.js';
 import type { Memory } from '../db/models/Memory.js';
+import { generateEmbedding } from '../services/embedding.js';
+import { enqueueEmbeddingJob } from '../services/embedding-worker.js';
 
 export const RememberSchema = z.object({
   user_id: z.string(),
@@ -13,6 +17,7 @@ export const RecallSchema = z.object({
   user_id: z.string(),
   query: z.string().optional().describe('Optional search query to filter memories'),
   tags: z.array(z.string()).optional().describe('Filter by tags'),
+  embedding_status: z.enum(['pending', 'completed', 'failed']).optional().describe('Optional embedding status filter'),
   limit: z.number().optional().default(50).describe('Maximum number of results'),
 });
 
@@ -24,6 +29,7 @@ export async function remember(input: z.infer<typeof RememberSchema>): Promise<{
   const id = uuid();
   const now = new Date();
   const tags = input.tags ?? [];
+  const embeddingStatus = config.database.type === 'postgres' ? 'pending' : null;
 
   const memory: Memory = {
     id,
@@ -31,6 +37,9 @@ export async function remember(input: z.infer<typeof RememberSchema>): Promise<{
     content: input.content,
     tags: tags,
     recalled_count: 0,
+    embedding_status: embeddingStatus,
+    embedding_model: null,
+    embedding_error: null,
     created_at: now,
   };
 
@@ -39,6 +48,18 @@ export async function remember(input: z.infer<typeof RememberSchema>): Promise<{
     tags: JSON.stringify(tags),
     created_at: now.toISOString(),
   });
+
+  if (config.database.type === 'postgres') {
+    const enqueued = await enqueueEmbeddingJob(id, input.content);
+    if (!enqueued) {
+      await db('memories').where('id', id).update({
+        embedding_status: 'failed',
+        embedding_error: 'Embedding queue unavailable (requires REDIS_URL and OPENAI_API_KEY)',
+      });
+      memory.embedding_status = 'failed';
+      memory.embedding_error = 'Embedding queue unavailable (requires REDIS_URL and OPENAI_API_KEY)';
+    }
+  }
 
   // Log activity
   await db('activities').insert({
@@ -54,27 +75,118 @@ export async function remember(input: z.infer<typeof RememberSchema>): Promise<{
   return { success: true, memory };
 }
 
-export async function recall(input: z.infer<typeof RecallSchema>): Promise<{ memories: Memory[] }> {
-  const limit = input.limit ?? 50;
-
-  let query = db('memories').where('user_id', input.user_id);
-
-  // Simple text search if query provided
-  if (input.query) {
-    query = query.where('content', 'like', `%${input.query}%`);
+function parseTags(rowTags: unknown): string[] {
+  if (Array.isArray(rowTags)) {
+    return rowTags.filter((tag): tag is string => typeof tag === 'string');
   }
 
-  const rows = await query.orderBy('created_at', 'desc').limit(limit);
+  if (typeof rowTags === 'string') {
+    try {
+      const parsed = JSON.parse(rowTags);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((tag): tag is string => typeof tag === 'string');
+      }
+    } catch {
+      return [];
+    }
+  }
 
-  // Filter by tags if provided (done in memory since SQLite JSON support is limited)
-  let memories: Memory[] = rows.map((row: Record<string, unknown>) => ({
+  return [];
+}
+
+function mapMemoryRow(row: Record<string, unknown>): Memory {
+  return {
     id: row.id as string,
     user_id: row.user_id as string,
     content: row.content as string,
-    tags: JSON.parse((row.tags as string) || '[]'),
-    recalled_count: row.recalled_count as number,
+    tags: parseTags(row.tags),
+    recalled_count: Number(row.recalled_count || 0),
+    embedding_status: (row.embedding_status as Memory['embedding_status']) ?? null,
+    embedding_model: (row.embedding_model as string | null) ?? null,
+    embedding_error: (row.embedding_error as string | null) ?? null,
     created_at: new Date(row.created_at as string),
-  }));
+  };
+}
+
+async function recallPostgresHybrid(input: z.infer<typeof RecallSchema>, limit: number): Promise<Record<string, unknown>[]> {
+  if (!input.query) {
+    let query = db('memories').where('user_id', input.user_id);
+    if (input.embedding_status) {
+      query = query.andWhere('embedding_status', input.embedding_status);
+    }
+    return query.orderBy('created_at', 'desc').limit(limit);
+  }
+
+  try {
+    const queryEmbedding = await generateEmbedding(input.query);
+    const embeddingSql = pgvector.toSql(queryEmbedding);
+
+    const bindings: unknown[] = [embeddingSql, input.query, input.query, input.user_id];
+    let embeddingFilterSql = '';
+    if (input.embedding_status) {
+      embeddingFilterSql = ' AND m.embedding_status = ? ';
+      bindings.push(input.embedding_status);
+    }
+    bindings.push(limit);
+
+    const raw = await db.raw(`
+      WITH query_embedding AS (
+        SELECT ?::vector(1536) AS embedding
+      )
+      SELECT
+        m.*,
+        CASE
+          WHEN m.embedding IS NOT NULL THEN
+            (1 - (m.embedding <=> (SELECT embedding FROM query_embedding))) * 0.7 +
+            COALESCE(ts_rank(to_tsvector('english', m.content), plainto_tsquery('english', ?)), 0) * 0.3
+          ELSE
+            COALESCE(ts_rank(to_tsvector('english', m.content), plainto_tsquery('english', ?)), 0) * 0.3
+        END AS hybrid_score
+      FROM memories m
+      WHERE m.user_id = ?
+      ${embeddingFilterSql}
+      ORDER BY hybrid_score DESC, m.created_at DESC
+      LIMIT ?
+    `, bindings);
+
+    return raw.rows as Record<string, unknown>[];
+  } catch (error) {
+    console.error('Hybrid search fallback to keyword search:', error);
+    let query = db('memories')
+      .where('user_id', input.user_id)
+      .andWhere('content', 'like', `%${input.query}%`);
+
+    if (input.embedding_status) {
+      query = query.andWhere('embedding_status', input.embedding_status);
+    }
+    return query.orderBy('created_at', 'desc').limit(limit);
+  }
+}
+
+export async function recall(input: z.infer<typeof RecallSchema>): Promise<{ memories: Memory[] }> {
+  const limit = input.limit ?? 50;
+  const isPostgres = config.database.type === 'postgres';
+
+  let rows: Record<string, unknown>[] = [];
+
+  if (isPostgres) {
+    rows = await recallPostgresHybrid(input, limit);
+  } else {
+    let query = db('memories').where('user_id', input.user_id);
+
+    if (input.query) {
+      query = query.andWhere('content', 'like', `%${input.query}%`);
+    }
+
+    if (input.embedding_status) {
+      query = query.andWhere('embedding_status', input.embedding_status);
+    }
+
+    rows = await query.orderBy('created_at', 'desc').limit(limit);
+  }
+
+  // Filter by tags if provided (done in memory since SQLite JSON support is limited)
+  let memories: Memory[] = rows.map(mapMemoryRow);
 
   if (input.tags && input.tags.length > 0) {
     memories = memories.filter((m) =>

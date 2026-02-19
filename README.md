@@ -11,7 +11,7 @@ The server exposes 15 MCP tools over Streamable HTTP, backed by a multi-user web
 ## Features
 
 - **Scheduled Reminders** — Time-based notifications with natural language parsing ("tomorrow at 2pm", "in 30 minutes"). Webhook push notifications when reminders trigger.
-- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search.
+- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search and optional semantic search (OpenAI embeddings + Redis).
 - **Task Tracking** — Long-running tasks with configurable check-in intervals (default 5 min). Periodic webhook notifications until completion.
 - **Activity History** — Full audit log of all events. Query by time range, type, and action with day/week/month summaries.
 - **Web Dashboard** — React frontend with stat cards, 30-day activity charts (Recharts), calendar view for reminders, and searchable memory list.
@@ -184,6 +184,25 @@ For push notifications (so Poke messages you when reminders trigger):
 1. Go to Poke > Settings > Advanced and generate a webhook API key
 2. Set `WEBHOOK_URL` and `WEBHOOK_API_KEY` in your environment
 
+**Important**: Poke requires SSE (Server-Sent Events) format. Configure your MCP client to accept `text/event-stream` in addition to `application/json`.
+
+### Optional: Semantic Search
+
+Enable AI-powered semantic search for memories using OpenAI embeddings and Redis:
+
+```bash
+# Set environment variables
+export OPENAI_API_KEY=sk-...
+export REDIS_URL=redis://localhost:6379
+
+# Or add to docker-compose.yml
+environment:
+  - OPENAI_API_KEY=${OPENAI_API_KEY}
+  - REDIS_URL=redis://redis:6379
+```
+
+Semantic search uses `text-embedding-3-small` (1536 dimensions) stored in Redis with vector similarity search. Embeddings are generated automatically in the background when memories are created or updated.
+
 ### Environment Variables
 
 | Variable | Required | Default | Description |
@@ -199,6 +218,8 @@ For push notifications (so Poke messages you when reminders trigger):
 | `WEBHOOK_URL` | No | - | Push notification endpoint |
 | `WEBHOOK_API_KEY` | No | - | Bearer token for webhook |
 | `AUTHENTIK_HOST` | No | - | Authentik base URL for SSO |
+| `OPENAI_API_KEY` | No | - | OpenAI API key for semantic search |
+| `REDIS_URL` | No | - | Redis URL for vector storage (semantic search) |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Project Structure
@@ -228,7 +249,9 @@ reminder-mcp/
 │   ├── services/
 │   │   ├── scheduler.ts      # Background job scheduler (60s poll)
 │   │   ├── notifier.ts       # Webhook notifications (Poke format)
-│   │   └── timezone.ts       # Timezone conversion & parsing
+│   │   ├── timezone.ts       # Timezone conversion & parsing
+│   │   ├── embedding.ts      # OpenAI embeddings (text-embedding-3-small)
+│   │   └── embedding-worker.ts  # Background worker for generating embeddings
 │   ├── tools/
 │   │   ├── reminders.ts      # Reminder MCP tools
 │   │   ├── memory.ts         # Memory MCP tools

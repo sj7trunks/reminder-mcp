@@ -129,6 +129,12 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
 
 // Middleware: Authentik forward auth auto-login
 export function authentikAutoLogin(req: AuthRequest, res: Response, next: NextFunction): void {
+  // In development, default to local auth flows unless explicitly overridden.
+  if (process.env.NODE_ENV !== 'production' && process.env.AUTHENTIK_IN_DEV !== 'true') {
+    next();
+    return;
+  }
+
   const authentikEmail = req.headers['x-authentik-email'] as string;
   if (!authentikEmail) {
     next();

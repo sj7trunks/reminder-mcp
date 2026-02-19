@@ -151,17 +151,22 @@ export interface Memory {
   content: string
   tags: string[]
   recalled_count: number
+  embedding_status?: 'pending' | 'completed' | 'failed' | null
+  embedding_model?: string | null
+  embedding_error?: string | null
   created_at: string
 }
 
 export async function getMemories(params?: {
   query?: string
   tags?: string
+  embedding_status?: 'pending' | 'completed' | 'failed'
   limit?: number
 }): Promise<{ memories: Memory[] }> {
   const searchParams = new URLSearchParams()
   if (params?.query) searchParams.set('query', params.query)
   if (params?.tags) searchParams.set('tags', params.tags)
+  if (params?.embedding_status) searchParams.set('embedding_status', params.embedding_status)
   if (params?.limit) searchParams.set('limit', String(params.limit))
 
   const response = await fetch(`${API_BASE}/memories?${searchParams}`, {

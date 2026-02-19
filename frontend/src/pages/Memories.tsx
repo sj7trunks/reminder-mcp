@@ -4,6 +4,8 @@ import { getMemories, createMemory, deleteMemory, type Memory } from '../api/cli
 import { format } from 'date-fns'
 
 function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: string) => void }) {
+  const status = memory.embedding_status ?? 'n/a'
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
       <div className="flex items-start justify-between">
@@ -16,6 +18,19 @@ function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: strin
         </button>
       </div>
       <div className="mt-3 flex items-center gap-2 flex-wrap">
+        <span
+          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+            status === 'completed'
+              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
+              : status === 'failed'
+                ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                : status === 'pending'
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400'
+                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+          }`}
+        >
+          Embedding: {status}
+        </span>
         {memory.tags.map((tag) => (
           <span
             key={tag}
@@ -28,6 +43,9 @@ function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: strin
           Recalled {memory.recalled_count}x &middot; {format(new Date(memory.created_at), 'MMM d, yyyy')}
         </span>
       </div>
+      {memory.embedding_status === 'failed' && memory.embedding_error && (
+        <p className="mt-2 text-xs text-red-600 dark:text-red-400">{memory.embedding_error}</p>
+      )}
     </div>
   )
 }
@@ -35,16 +53,18 @@ function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: strin
 export default function Memories() {
   const [searchQuery, setSearchQuery] = useState('')
   const [tagFilter, setTagFilter] = useState('')
+  const [embeddingStatusFilter, setEmbeddingStatusFilter] = useState<'pending' | 'completed' | 'failed' | ''>('')
   const [showCreate, setShowCreate] = useState(false)
   const [newContent, setNewContent] = useState('')
   const [newTags, setNewTags] = useState('')
   const queryClient = useQueryClient()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['memories', searchQuery, tagFilter],
+    queryKey: ['memories', searchQuery, tagFilter, embeddingStatusFilter],
     queryFn: () => getMemories({
       query: searchQuery || undefined,
       tags: tagFilter || undefined,
+      embedding_status: embeddingStatusFilter || undefined,
     }),
   })
 
@@ -132,6 +152,16 @@ export default function Memories() {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
         />
+        <select
+          value={embeddingStatusFilter}
+          onChange={(e) => setEmbeddingStatusFilter(e.target.value as 'pending' | 'completed' | 'failed' | '')}
+          className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+        >
+          <option value="">All Embeddings</option>
+          <option value="pending">Pending</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+        </select>
         {allTags.length > 0 && (
           <div className="flex gap-1 flex-wrap">
             <button

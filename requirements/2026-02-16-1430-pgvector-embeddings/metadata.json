@@ -1,0 +1,36 @@
+{
+  "id": "pgvector-embeddings",
+  "started": "2026-02-16T14:30:00Z",
+  "lastUpdated": "2026-02-16T14:45:00Z",
+  "status": "active",
+  "phase": "complete",
+  "progress": {
+    "discovery": { "answered": 5, "total": 5 },
+    "detail": { "answered": 5, "total": 5 }
+  },
+  "contextFiles": [
+    "src/tools/memory.ts",
+    "src/db/migrations/002_create_memories.ts",
+    "src/db/models/Memory.ts",
+    "src/config/index.ts",
+    "knexfile.ts",
+    "package.json"
+  ],
+  "relatedFeatures": [
+    "recall tool with LIKE search",
+    "tag-based filtering",
+    "activity logging",
+    "Bull/Redis job queue"
+  ],
+  "decisions": {
+    "embeddingProvider": "OpenAI text-embedding-3-small",
+    "embeddingDimensions": 1536,
+    "sqliteFallback": "LIKE search only",
+    "asyncEmbedding": "Bull/Redis background jobs",
+    "searchStrategy": "Hybrid FTS + semantic (70/30)",
+    "backfill": "Required for existing memories",
+    "statusTracking": "embedding_status field (pending/completed/failed)",
+    "modelVersioning": "embedding_model field for future migration",
+    "retryPolicy": "5 attempts with exponential backoff, log failures"
+  }
+}

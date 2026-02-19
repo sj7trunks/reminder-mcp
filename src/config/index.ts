@@ -9,6 +9,9 @@ const configSchema = z.object({
   redis: z.object({
     url: z.string().optional(),
   }),
+  openai: z.object({
+    apiKey: z.string().optional(),
+  }),
   webhook: z.object({
     url: z.string().optional(),
     apiKey: z.string().optional(),
@@ -29,14 +32,20 @@ const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 export function loadConfig(): Config {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const databaseType = isProduction ? (process.env.DATABASE_TYPE || 'sqlite') : 'sqlite';
+
   return configSchema.parse({
     database: {
-      type: process.env.DATABASE_TYPE || 'sqlite',
+      type: databaseType,
       path: process.env.DATABASE_PATH || './data/reminder.db',
-      url: process.env.DATABASE_URL,
+      url: databaseType === 'postgres' ? process.env.DATABASE_URL : undefined,
     },
     redis: {
       url: process.env.REDIS_URL,
+    },
+    openai: {
+      apiKey: process.env.OPENAI_API_KEY,
     },
     webhook: {
       url: process.env.WEBHOOK_URL,

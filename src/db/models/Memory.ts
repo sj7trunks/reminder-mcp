@@ -6,6 +6,10 @@ export const MemorySchema = z.object({
   content: z.string(),
   tags: z.array(z.string()),
   recalled_count: z.number(),
+  embedding: z.array(z.number()).nullable().optional(),
+  embedding_status: z.enum(['pending', 'completed', 'failed']).nullable().optional(),
+  embedding_model: z.string().nullable().optional(),
+  embedding_error: z.string().nullable().optional(),
   created_at: z.coerce.date(),
 });
 

@@ -10,6 +10,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createServer } from './server.js';
 import { runMigrations, closeDatabase } from './db/index.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
+import { startEmbeddingWorker, stopEmbeddingWorker } from './services/embedding-worker.js';
 import { config } from './config/index.js';
 import { requireApiKey, authentikAutoLogin, type AuthRequest } from './middleware/auth.js';
 
@@ -55,6 +56,30 @@ app.post('/mcp', requireApiKey, async (req: AuthRequest, res: Response) => {
   const server = createServer(req.user!.id);
 
   try {
+    // Ensure Accept header includes required types for Streamable HTTP transport
+    // Some MCP clients (like Poke) don't send these headers by default
+    const accept = req.headers.accept || req.get('accept') || '';
+
+    if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+      // Modify headers at multiple levels to ensure the transport sees the correct value
+      const requiredAccept = 'application/json, text/event-stream';
+
+      // 1. Modify Express headers object
+      req.headers.accept = requiredAccept;
+
+      // 2. Override req.get() method
+      const originalGet = req.get.bind(req);
+      req.get = function(name: string): string | undefined {
+        if (name.toLowerCase() === 'accept') {
+          return requiredAccept;
+        }
+        return originalGet(name);
+      };
+
+      // 3. Override req.header() method (alias for get)
+      req.header = req.get;
+    }
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
@@ -159,11 +184,13 @@ async function main(): Promise<void> {
 
   // Start background scheduler (checks every minute)
   startScheduler(60000);
+  startEmbeddingWorker();
 
   // Handle shutdown
   const shutdown = async () => {
     console.log('Shutting down...');
     stopScheduler();
+    await stopEmbeddingWorker();
     await closeDatabase();
     process.exit(0);
   };
