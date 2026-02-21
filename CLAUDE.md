@@ -4,7 +4,7 @@ This file provides context for AI assistants working on this codebase.
 
 ## Project Overview
 
-Multi-user MCP (Model Context Protocol) server with a React web frontend. Provides persistent memory, scheduled reminders, task tracking, and activity history. Designed primarily for Poke (an iMessage AI bot) but works with any MCP-compatible client. Includes a full web dashboard for managing data, API keys, and admin functions.
+Multi-user MCP (Model Context Protocol) server with a React web frontend. Provides persistent memory, scheduled reminders, task tracking, and activity history. Designed primarily for Poke (an iMessage AI bot) but works with any MCP-compatible client. Includes a full web dashboard for managing data, API keys, and admin functions. Supports **scoped memories** (personal, team, application, global), **teams**, and **applications** for shared knowledge across agents and team members.
 
 ## Quick Commands
 
@@ -35,18 +35,39 @@ docker compose up -d # Run HTTP server in container
 ### Entry Points
 - `src/index.ts` - stdio transport (Claude Desktop, local dev)
 - `src/http.ts` - HTTP transport (Poke, web frontend, Docker)
-- `src/server.ts` - `createServer(userId)` — creates per-request MCP server scoped to a user
+- `src/server.ts` - `createServer(userId, context?)` — creates per-request MCP server scoped to a user with optional McpContext
 
 ### Multi-User Model
-- `createServer(userId)` injects the authenticated user's ID into every tool call
+- `createServer(userId, context?)` injects the authenticated user's ID and scope context into every tool call
 - MCP clients never see or send `user_id` — it's injected server-side from the API key lookup
-- All queries filter by `user_id` for data isolation
+- All queries filter by `user_id` for data isolation (personal scope) or by team/app membership (shared scopes)
 - First user to register or log in via Authentik is auto-promoted to admin
 
 ### Auth Flows
-- **MCP clients**: `Authorization: Bearer <api-key>` → SHA-256 hash → lookup in `api_keys` table → resolve `user_id`
+- **MCP clients**: `Authorization: Bearer <api-key>` → SHA-256 hash → lookup in `api_keys` table → resolve `user_id` + `McpContext` (scope_type, team_id)
 - **Web frontend**: JWT cookie set on login/register or Authentik auto-login → `requireAuth` middleware
 - **Authentik SSO**: Traefik forwards `X-authentik-email` header → `authentikAutoLogin` middleware auto-creates user + sets JWT cookie
+
+### Scoped Memories
+Memories support four scopes:
+- **personal** (default) — visible only to the owning user
+- **team** — visible to all team members, requires `scope_id` = team UUID
+- **application** — visible to app owner and team members (if app is under a team)
+- **global** — visible to everyone, admin-only for writes
+
+`McpContext` (`src/types/context.ts`) carries scope info through the request:
+```typescript
+interface McpContext {
+  userId: string;
+  scopeType: 'user' | 'team';
+  teamId?: string;
+  isAdmin?: boolean;
+}
+```
+
+**API key scoping**: User keys default to personal scope. Team keys (scope_type='team') default to team scope. The context is built in `requireApiKey` middleware and passed to `createServer()`.
+
+**Dedup on write**: When Postgres + OpenAI are configured, `remember()` generates an embedding before insert and checks for cosine similarity > 0.9 in the same scope. If a near-duplicate exists, the old memory gets `superseded_by` set to the new ID. The pre-computed embedding is stored directly (skipping the queue).
 
 ### Database Layer
 - Knex.js query builder
@@ -67,6 +88,9 @@ docker compose up -d # Run HTTP server in container
 ### Tool Handlers Accept `user_id` as Required Field
 All tool schemas require `user_id: z.string()`. The MCP server injects this from the authenticated user — clients don't provide it. When calling handlers directly (e.g., from REST routes), pass the user ID explicitly.
 
+### Memory Handlers Accept Optional `McpContext`
+Memory tool functions (`remember`, `recall`, `forget`) accept an optional `McpContext` parameter for scope resolution and permission checks. REST routes build this from the authenticated user; MCP routes pass it from `req.mcpContext`.
+
 ### Handler Functions Must Provide Defaults for Optional Fields
 Since handlers may be called directly without Zod parsing:
 ```typescript
@@ -82,6 +106,12 @@ Single-entity operations (complete, cancel, delete) must verify ownership:
 const row = await db('reminders').where('id', input.reminder_id).where('user_id', input.user_id).first();
 if (!row) return { success: false, error: 'Not found' };
 ```
+
+For scoped memories, `forget()` checks scope-based permissions:
+- **personal**: user_id match
+- **team**: author_id match OR team admin
+- **application**: author_id match OR team admin (if app has team)
+- **global**: system admin only
 
 ### Activity Logging
 All mutations log to the activities table for the dashboard timeline.
@@ -99,6 +129,33 @@ All mutations log to the activities table for the dashboard timeline.
 | created_at | TIMESTAMP | |
 | updated_at | TIMESTAMP | |
 
+### teams
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| name | TEXT | Not null |
+| created_by | UUID | FK to users, CASCADE |
+| created_at | TIMESTAMP | |
+| updated_at | TIMESTAMP | |
+
+### team_memberships
+| Column | Type | Notes |
+|--------|------|-------|
+| user_id | UUID | Composite PK, FK to users CASCADE |
+| team_id | UUID | Composite PK, FK to teams CASCADE |
+| role | STRING(10) | 'admin' or 'member' |
+| created_at | TIMESTAMP | |
+
+### applications
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| name | TEXT | Not null |
+| team_id | UUID | Nullable FK to teams, SET NULL |
+| created_by | UUID | FK to users, CASCADE |
+| created_at | TIMESTAMP | |
+| updated_at | TIMESTAMP | |
+
 ### api_keys
 | Column | Type | Notes |
 |--------|------|-------|
@@ -107,9 +164,31 @@ All mutations log to the activities table for the dashboard timeline.
 | key_hash | TEXT | SHA-256 hex hash, indexed |
 | prefix | VARCHAR(8) | First 8 chars for UI display |
 | name | TEXT | User-given label |
+| scope_type | STRING(10) | 'user' (default) or 'team' |
+| team_id | UUID | Nullable FK to teams, CASCADE |
 | created_at | TIMESTAMP | |
 
-### reminders, memories, tasks, activities
+### memories
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| user_id | STRING | Not null, indexed |
+| content | TEXT | Not null |
+| tags | JSON | Default '[]' |
+| recalled_count | INTEGER | Default 0 |
+| embedding | vector(1536) | Postgres only, nullable |
+| embedding_status | STRING(20) | pending/completed/failed |
+| scope | STRING(20) | personal/team/application/global, default 'personal' |
+| scope_id | UUID | References team or application ID |
+| author_id | UUID | FK to users — who created it |
+| promoted_from | UUID | Source memory ID if promoted |
+| superseded_by | UUID | Dedup chain pointer |
+| retrieval_count | INTEGER | Default 0 |
+| last_retrieved_at | TIMESTAMP | Nullable |
+| classification | STRING(20) | foundational/tactical/observational |
+| created_at | TIMESTAMP | |
+
+### reminders, tasks, activities
 See migration files in `src/db/migrations/` for full schemas. All have `user_id` foreign keys.
 
 ## REST API Routes
@@ -117,16 +196,45 @@ See migration files in `src/db/migrations/` for full schemas. All have `user_id`
 | Route File | Prefix | Auth | Purpose |
 |------------|--------|------|---------|
 | `routes/auth.ts` | `/api/auth` | Public (register/login) + JWT (me) | User registration, login, logout |
-| `routes/keys.ts` | `/api/keys` | JWT | API key management (create, list, revoke) |
+| `routes/keys.ts` | `/api/keys` | JWT | API key management (create with scope_type, list, revoke) |
 | `routes/reminders.ts` | `/api/reminders` | JWT | CRUD with date range queries |
-| `routes/memories.ts` | `/api/memories` | JWT | CRUD with search and tag filtering |
+| `routes/memories.ts` | `/api/memories` | JWT | CRUD with search, tag, and scope filtering |
 | `routes/tasks.ts` | `/api/tasks` | JWT | CRUD operations |
 | `routes/stats.ts` | `/api/stats` | JWT | Dashboard data, Recharts-formatted timeline |
 | `routes/admin.ts` | `/api/admin` | JWT + Admin | User management, backup/restore |
+| `routes/teams.ts` | `/api/teams` | JWT | Team CRUD + member management |
+| `routes/applications.ts` | `/api/applications` | JWT | Application CRUD |
+
+### Memory-Specific Endpoints
+- `GET /api/memories/scopes` — List available scopes (personal + user's teams/apps + global)
+- `POST /api/memories/:id/promote` — Copy a memory to a different scope
+- Scope filtering: `?scope=team&scope_id=<uuid>` on GET
 
 ### Admin Backup/Restore
 - `GET /api/admin/backup` — Downloads all tables as `.json.gz` (gzipped JSON, Node built-in `zlib`)
 - `POST /api/admin/restore` — Accepts `.json.gz` upload, replaces all data in a transaction
+- Backup includes: users, teams, team_memberships, api_keys, reminders, memories, tasks, activities, applications
+
+## MCP Tools
+
+### Memory Tools
+| Tool | Description |
+|------|-------------|
+| `remember` | Store a memory with optional scope, scope_id, classification |
+| `recall` | Search memories across scopes with optional scope/scope_id filter |
+| `forget` | Delete a memory (permission-checked by scope) |
+| `promote_memory` | Copy a memory to a different scope |
+| `list_scopes` | List all available scopes for the user |
+
+### Other Tools
+| Tool | Description |
+|------|-------------|
+| `create_reminder` | Schedule a reminder |
+| `list_reminders` | Get reminders with status filter |
+| `complete_reminder` / `cancel_reminder` | Update reminder status |
+| `start_task` / `check_task` / `list_tasks` / `complete_task` / `update_task` | Task tracking |
+| `get_activity` / `get_summary` | Activity history |
+| `get_pending_checkups` | Due reminders and tasks |
 
 ## Frontend
 
@@ -138,8 +246,9 @@ React 18 + TypeScript + Vite + Tailwind CSS + React Query + Recharts.
 | `Register.tsx` | New account registration |
 | `Dashboard.tsx` | Stat cards + 30-day activity chart |
 | `Reminders.tsx` | Calendar grid with day-click to view/add |
-| `Memories.tsx` | Searchable list with tag filters |
-| `Settings.tsx` | API key management + theme toggle |
+| `Memories.tsx` | Searchable list with scope filter, tag filters, scope badge |
+| `Teams.tsx` | Team list, create, detail view with member management |
+| `Settings.tsx` | API key management (user/team keys) + theme toggle |
 | `Admin.tsx` | User list with admin toggle, backup/restore |
 
 Dark mode via `ThemeContext.tsx` — system preference + manual toggle + localStorage.
@@ -158,7 +267,7 @@ Dark mode via `ThemeContext.tsx` — system preference + manual toggle + localSt
 | `DEFAULT_TIMEZONE` | No | `America/Los_Angeles` | Default timezone |
 | `WEBHOOK_URL` | No | - | Webhook for push notifications (Poke) |
 | `WEBHOOK_API_KEY` | No | - | Bearer token for webhook auth |
-| `OPENAI_API_KEY` | No | - | OpenAI API key for semantic search (text-embedding-3-small) |
+| `OPENAI_API_KEY` | No | - | OpenAI API key for semantic search + dedup (text-embedding-3-small) |
 | `REDIS_URL` | No | - | Redis connection URL for vector storage (semantic search) |
 
 ## Docker
@@ -214,6 +323,9 @@ The Vite dev server is configured for external access through reverse proxy:
 - API proxy target configurable via `VITE_API_PROXY_TARGET`
 - Allows external domains via `allowedHosts` configuration
 
+### Scope Route Order in memories.ts
+`GET /api/memories/scopes` MUST be registered BEFORE `/:id` routes, otherwise Express matches "scopes" as an `:id` parameter.
+
 ## Testing Checklist
 
 Before deploying changes:
@@ -224,3 +336,7 @@ Before deploying changes:
 5. Verify MCP endpoint with API key auth
 6. Verify web frontend login flow
 7. Test backup/restore round-trip
+8. MCP remember/recall without scope params works identically to before
+9. Create team via API, add member, create team memory
+10. Recall with user key returns personal + team + global memories
+11. Forget team memory: author succeeds, non-author non-admin denied

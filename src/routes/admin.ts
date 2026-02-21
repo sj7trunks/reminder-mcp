@@ -80,7 +80,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, async (req: AuthRequest, r
 });
 
 // Data tables to include in backup (order matters for foreign keys on restore)
-const BACKUP_TABLES = ['users', 'api_keys', 'reminders', 'memories', 'tasks', 'activities'] as const;
+const BACKUP_TABLES = ['users', 'teams', 'team_memberships', 'api_keys', 'reminders', 'memories', 'tasks', 'activities', 'applications'] as const;
 
 // GET /api/admin/backup — download full database as gzipped JSON
 router.get('/backup', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {

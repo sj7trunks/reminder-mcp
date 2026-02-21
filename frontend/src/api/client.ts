@@ -64,6 +64,8 @@ export interface ApiKey {
   prefix: string
   name: string
   key?: string // only on creation
+  scope_type?: 'user' | 'team'
+  team_id?: string | null
   created_at: string
 }
 
@@ -74,12 +76,16 @@ export async function getApiKeys(): Promise<ApiKey[]> {
   return handleResponse(response)
 }
 
-export async function createApiKey(name: string): Promise<ApiKey> {
+export async function createApiKey(data: {
+  name: string
+  scope_type?: 'user' | 'team'
+  team_id?: string
+}): Promise<ApiKey> {
   const response = await fetch(`${API_BASE}/keys`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(data),
   })
   return handleResponse(response)
 }
@@ -146,6 +152,8 @@ export async function updateReminder(id: string, action: 'complete' | 'cancel'):
 }
 
 // Memories
+export type MemoryScope = 'personal' | 'team' | 'application' | 'global'
+
 export interface Memory {
   id: string
   content: string
@@ -154,7 +162,18 @@ export interface Memory {
   embedding_status?: 'pending' | 'completed' | 'failed' | null
   embedding_model?: string | null
   embedding_error?: string | null
+  scope?: MemoryScope
+  scope_id?: string | null
+  author_id?: string | null
+  classification?: 'foundational' | 'tactical' | 'observational' | null
+  retrieval_count?: number
   created_at: string
+}
+
+export interface MemoryScopeInfo {
+  type: string
+  id?: string
+  name?: string
 }
 
 export async function getMemories(params?: {
@@ -162,12 +181,16 @@ export async function getMemories(params?: {
   tags?: string
   embedding_status?: 'pending' | 'completed' | 'failed'
   limit?: number
+  scope?: MemoryScope
+  scope_id?: string
 }): Promise<{ memories: Memory[] }> {
   const searchParams = new URLSearchParams()
   if (params?.query) searchParams.set('query', params.query)
   if (params?.tags) searchParams.set('tags', params.tags)
   if (params?.embedding_status) searchParams.set('embedding_status', params.embedding_status)
   if (params?.limit) searchParams.set('limit', String(params.limit))
+  if (params?.scope) searchParams.set('scope', params.scope)
+  if (params?.scope_id) searchParams.set('scope_id', params.scope_id)
 
   const response = await fetch(`${API_BASE}/memories?${searchParams}`, {
     credentials: 'include',
@@ -178,6 +201,9 @@ export async function getMemories(params?: {
 export async function createMemory(data: {
   content: string
   tags?: string[]
+  scope?: MemoryScope
+  scope_id?: string
+  classification?: string
 }): Promise<{ success: boolean; memory?: Memory; error?: string }> {
   const response = await fetch(`${API_BASE}/memories`, {
     method: 'POST',
@@ -190,6 +216,146 @@ export async function createMemory(data: {
 
 export async function deleteMemory(id: string): Promise<void> {
   const response = await fetch(`${API_BASE}/memories/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  await handleResponse(response)
+}
+
+export async function getMemoryScopes(): Promise<{ scopes: MemoryScopeInfo[] }> {
+  const response = await fetch(`${API_BASE}/memories/scopes`, {
+    credentials: 'include',
+  })
+  return handleResponse(response)
+}
+
+export async function promoteMemory(id: string, data: {
+  target_scope: MemoryScope
+  target_scope_id?: string
+}): Promise<{ success: boolean; memory?: Memory; error?: string }> {
+  const response = await fetch(`${API_BASE}/memories/${id}/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  })
+  return handleResponse(response)
+}
+
+// Teams
+export interface Team {
+  id: string
+  name: string
+  created_by: string
+  my_role?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TeamMember {
+  id: string
+  email: string
+  name: string | null
+  role: 'admin' | 'member'
+  created_at: string
+}
+
+export interface TeamDetail extends Team {
+  members: TeamMember[]
+}
+
+export async function getTeams(): Promise<Team[]> {
+  const response = await fetch(`${API_BASE}/teams`, {
+    credentials: 'include',
+  })
+  return handleResponse(response)
+}
+
+export async function createTeam(name: string): Promise<Team> {
+  const response = await fetch(`${API_BASE}/teams`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ name }),
+  })
+  return handleResponse(response)
+}
+
+export async function getTeam(id: string): Promise<TeamDetail> {
+  const response = await fetch(`${API_BASE}/teams/${id}`, {
+    credentials: 'include',
+  })
+  return handleResponse(response)
+}
+
+export async function deleteTeam(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/teams/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  await handleResponse(response)
+}
+
+export async function addTeamMember(teamId: string, email: string, role?: string): Promise<TeamMember> {
+  const response = await fetch(`${API_BASE}/teams/${teamId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, role }),
+  })
+  return handleResponse(response)
+}
+
+export async function updateTeamMemberRole(teamId: string, userId: string, role: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/teams/${teamId}/members/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ role }),
+  })
+  await handleResponse(response)
+}
+
+export async function removeTeamMember(teamId: string, userId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/teams/${teamId}/members/${userId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  await handleResponse(response)
+}
+
+// Applications
+export interface Application {
+  id: string
+  name: string
+  team_id: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export async function getApplications(): Promise<Application[]> {
+  const response = await fetch(`${API_BASE}/applications`, {
+    credentials: 'include',
+  })
+  return handleResponse(response)
+}
+
+export async function createApplication(data: {
+  name: string
+  team_id?: string
+}): Promise<Application> {
+  const response = await fetch(`${API_BASE}/applications`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  })
+  return handleResponse(response)
+}
+
+export async function deleteApplication(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/applications/${id}`, {
     method: 'DELETE',
     credentials: 'include',
   })

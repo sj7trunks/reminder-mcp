@@ -16,10 +16,16 @@ import {
   RememberSchema,
   RecallSchema,
   ForgetSchema,
+  PromoteMemorySchema,
+  ListScopesSchema,
   remember,
   recall,
   forget,
+  promoteMemory,
+  listScopes,
 } from './tools/memory.js';
+
+import type { McpContext } from './types/context.js';
 
 import {
   StartTaskSchema,
@@ -60,7 +66,7 @@ function toResponse(result: unknown): { content: [{ type: 'text'; text: string }
   return { content: [{ type: 'text', text: JSON.stringify(stripUserId(result), null, 2) }] };
 }
 
-export function createServer(userId: string): McpServer {
+export function createServer(userId: string, context?: McpContext): McpServer {
   const server = new McpServer({
     name: 'reminder-mcp',
     version: '1.0.0',
@@ -124,29 +130,34 @@ export function createServer(userId: string): McpServer {
 
   server.tool(
     'remember',
-    'Store something to recall later (passive memory)',
+    'Store something to recall later (passive memory). Supports scoped memories: personal, team, application, or global.',
     {
       content: RememberSchema.shape.content,
       tags: RememberSchema.shape.tags,
+      scope: RememberSchema.shape.scope,
+      scope_id: RememberSchema.shape.scope_id,
+      classification: RememberSchema.shape.classification,
     },
     async (args) => {
       const input = RememberSchema.parse({ ...args, user_id: userId });
-      const result = await remember(input);
+      const result = await remember(input, context);
       return toResponse(result);
     }
   );
 
   server.tool(
     'recall',
-    'Get all stored memories with optional filter',
+    'Get all stored memories with optional filter. Without scope filter, returns personal + team + global memories.',
     {
       query: RecallSchema.shape.query,
       tags: RecallSchema.shape.tags,
       limit: RecallSchema.shape.limit,
+      scope: RecallSchema.shape.scope,
+      scope_id: RecallSchema.shape.scope_id,
     },
     async (args) => {
       const input = RecallSchema.parse({ ...args, user_id: userId });
-      const result = await recall(input);
+      const result = await recall(input, context);
       return toResponse(result);
     }
   );
@@ -157,7 +168,32 @@ export function createServer(userId: string): McpServer {
     ForgetSchema.shape,
     async (args) => {
       const input = ForgetSchema.parse(args);
-      const result = await forget({ ...input, user_id: userId });
+      const result = await forget({ ...input, user_id: userId }, context);
+      return toResponse(result);
+    }
+  );
+
+  server.tool(
+    'promote_memory',
+    'Copy a memory to a different scope (e.g., personal to team or global)',
+    {
+      memory_id: PromoteMemorySchema.shape.memory_id,
+      target_scope: PromoteMemorySchema.shape.target_scope,
+      target_scope_id: PromoteMemorySchema.shape.target_scope_id,
+    },
+    async (args) => {
+      const input = PromoteMemorySchema.parse({ ...args, user_id: userId });
+      const result = await promoteMemory(input);
+      return toResponse(result);
+    }
+  );
+
+  server.tool(
+    'list_scopes',
+    'List all memory scopes available to this user (personal, teams, applications, global)',
+    {},
+    async () => {
+      const result = await listScopes({ user_id: userId });
       return toResponse(result);
     }
   );

@@ -11,7 +11,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
   try {
     const keys = await db('api_keys')
       .where('user_id', req.user!.id)
-      .select('id', 'prefix', 'name', 'created_at')
+      .select('id', 'prefix', 'name', 'scope_type', 'team_id', 'created_at')
       .orderBy('created_at', 'desc');
 
     res.json(keys);
@@ -24,7 +24,26 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
 // POST /api/keys — create a new API key
 router.post('/', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { name } = req.body;
+    const { name, scope_type, team_id } = req.body;
+    const keyScope = scope_type === 'team' ? 'team' : 'user';
+
+    // Validate team key requirements
+    if (keyScope === 'team') {
+      if (!team_id) {
+        res.status(400).json({ error: 'team_id is required for team-scoped keys' });
+        return;
+      }
+
+      // Verify user is a team admin
+      const membership = await db('team_memberships')
+        .where({ user_id: req.user!.id, team_id })
+        .first();
+
+      if (!membership || (membership.role as string) !== 'admin') {
+        res.status(403).json({ error: 'Team admin access required to create team keys' });
+        return;
+      }
+    }
 
     // Generate a random API key
     const rawKey = crypto.randomBytes(32).toString('hex');
@@ -39,6 +58,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res) => {
       key_hash: keyHash,
       prefix,
       name: name || 'default',
+      scope_type: keyScope,
+      team_id: keyScope === 'team' ? team_id : null,
       created_at: now,
     });
 
@@ -48,6 +69,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res) => {
       key: rawKey,
       prefix,
       name: name || 'default',
+      scope_type: keyScope,
+      team_id: keyScope === 'team' ? team_id : null,
       created_at: now,
     });
   } catch (error) {

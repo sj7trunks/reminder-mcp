@@ -22,6 +22,8 @@ import memoriesRoutes from './routes/memories.js';
 import tasksRoutes from './routes/tasks.js';
 import statsRoutes from './routes/stats.js';
 import adminRoutes from './routes/admin.js';
+import teamsRoutes from './routes/teams.js';
+import applicationsRoutes from './routes/applications.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,7 +55,7 @@ app.use('/mcp', (req: Request, _res: Response, next: NextFunction) => {
 
 // Streamable HTTP MCP endpoint (stateless - new server per request)
 app.post('/mcp', requireApiKey, async (req: AuthRequest, res: Response) => {
-  const server = createServer(req.user!.id);
+  const server = createServer(req.user!.id, req.mcpContext);
 
   try {
     // Ensure Accept header includes required types for Streamable HTTP transport
@@ -142,6 +144,8 @@ app.use('/api/memories', memoriesRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/teams', teamsRoutes);
+app.use('/api/applications', applicationsRoutes);
 
 // Static file serving for production (React SPA)
 if (process.env.NODE_ENV === 'production') {

@@ -1,10 +1,38 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMemories, createMemory, deleteMemory, type Memory } from '../api/client'
+import {
+  getMemories,
+  createMemory,
+  deleteMemory,
+  getMemoryScopes,
+  type Memory,
+  type MemoryScope,
+  type MemoryScopeInfo,
+} from '../api/client'
 import { format } from 'date-fns'
+
+const scopeColors: Record<string, string> = {
+  personal: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+  team: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
+  application: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
+  global: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
+}
+
+function ScopeBadge({ scope }: { scope: string }) {
+  return (
+    <span
+      className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
+        scopeColors[scope] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+      }`}
+    >
+      {scope}
+    </span>
+  )
+}
 
 function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: string) => void }) {
   const status = memory.embedding_status ?? 'n/a'
+  const scope = memory.scope ?? 'personal'
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
@@ -18,6 +46,12 @@ function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: strin
         </button>
       </div>
       <div className="mt-3 flex items-center gap-2 flex-wrap">
+        <ScopeBadge scope={scope} />
+        {memory.classification && (
+          <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+            {memory.classification}
+          </span>
+        )}
         <span
           className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
             status === 'completed'
@@ -54,17 +88,33 @@ export default function Memories() {
   const [searchQuery, setSearchQuery] = useState('')
   const [tagFilter, setTagFilter] = useState('')
   const [embeddingStatusFilter, setEmbeddingStatusFilter] = useState<'pending' | 'completed' | 'failed' | ''>('')
+  const [scopeFilter, setScopeFilter] = useState('')
+  const [scopeIdFilter, setScopeIdFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [newContent, setNewContent] = useState('')
   const [newTags, setNewTags] = useState('')
+  const [newScope, setNewScope] = useState<MemoryScope>('personal')
+  const [newScopeId, setNewScopeId] = useState('')
+  const [newClassification, setNewClassification] = useState('')
   const queryClient = useQueryClient()
 
+  const { data: scopesData } = useQuery({
+    queryKey: ['memoryScopes'],
+    queryFn: getMemoryScopes,
+  })
+
+  const scopes = scopesData?.scopes ?? []
+  // Scopes that have an ID (teams and applications)
+  const namedScopes = scopes.filter((s) => s.id)
+
   const { data, isLoading } = useQuery({
-    queryKey: ['memories', searchQuery, tagFilter, embeddingStatusFilter],
+    queryKey: ['memories', searchQuery, tagFilter, embeddingStatusFilter, scopeFilter, scopeIdFilter],
     queryFn: () => getMemories({
       query: searchQuery || undefined,
       tags: tagFilter || undefined,
       embedding_status: embeddingStatusFilter || undefined,
+      scope: (scopeFilter as MemoryScope) || undefined,
+      scope_id: scopeIdFilter || undefined,
     }),
   })
 
@@ -81,17 +131,53 @@ export default function Memories() {
     mutationFn: () => createMemory({
       content: newContent,
       tags: newTags ? newTags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+      scope: newScope,
+      scope_id: newScopeId || undefined,
+      classification: newClassification || undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['memories'] })
       setShowCreate(false)
       setNewContent('')
       setNewTags('')
+      setNewScope('personal')
+      setNewScopeId('')
+      setNewClassification('')
     },
   })
 
   // Collect all unique tags for filter suggestions
   const allTags = [...new Set(memories.flatMap((m) => m.tags))]
+
+  // Build scope filter options from scopes data
+  const handleScopeFilterChange = (value: string) => {
+    if (value === '') {
+      setScopeFilter('')
+      setScopeIdFilter('')
+    } else if (value.includes(':')) {
+      const [type, id] = value.split(':')
+      setScopeFilter(type)
+      setScopeIdFilter(id)
+    } else {
+      setScopeFilter(value)
+      setScopeIdFilter('')
+    }
+  }
+
+  // Build create scope options
+  const handleNewScopeChange = (value: string) => {
+    if (value.includes(':')) {
+      const [type, id] = value.split(':')
+      setNewScope(type as MemoryScope)
+      setNewScopeId(id)
+    } else {
+      setNewScope(value as MemoryScope)
+      setNewScopeId('')
+    }
+  }
+
+  const currentScopeValue = scopeIdFilter ? `${scopeFilter}:${scopeIdFilter}` : scopeFilter
+  const currentNewScopeValue = newScopeId ? `${newScope}:${newScopeId}` : newScope
 
   return (
     <div className="space-y-6">
@@ -118,13 +204,39 @@ export default function Memories() {
             rows={3}
             className="block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
           />
-          <input
-            type="text"
-            placeholder="Tags (comma-separated, optional)"
-            value={newTags}
-            onChange={(e) => setNewTags(e.target.value)}
-            className="block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
-          />
+          <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="text"
+              placeholder="Tags (comma-separated, optional)"
+              value={newTags}
+              onChange={(e) => setNewTags(e.target.value)}
+              className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            />
+            <select
+              value={currentNewScopeValue}
+              onChange={(e) => handleNewScopeChange(e.target.value)}
+              className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            >
+              <option value="personal">Personal</option>
+              {namedScopes.filter((s) => s.type === 'team').map((s) => (
+                <option key={s.id} value={`team:${s.id}`}>Team: {s.name}</option>
+              ))}
+              {namedScopes.filter((s) => s.type === 'application').map((s) => (
+                <option key={s.id} value={`application:${s.id}`}>App: {s.name}</option>
+              ))}
+              <option value="global">Global</option>
+            </select>
+            <select
+              value={newClassification}
+              onChange={(e) => setNewClassification(e.target.value)}
+              className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            >
+              <option value="">No classification</option>
+              <option value="foundational">Foundational</option>
+              <option value="tactical">Tactical</option>
+              <option value="observational">Observational</option>
+            </select>
+          </div>
           <div className="flex gap-2">
             <button
               onClick={() => createMutation.mutate()}
@@ -152,6 +264,21 @@ export default function Memories() {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
         />
+        <select
+          value={currentScopeValue}
+          onChange={(e) => handleScopeFilterChange(e.target.value)}
+          className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+        >
+          <option value="">All Scopes</option>
+          <option value="personal">Personal</option>
+          {namedScopes.filter((s) => s.type === 'team').map((s) => (
+            <option key={s.id} value={`team:${s.id}`}>Team: {s.name}</option>
+          ))}
+          {namedScopes.filter((s) => s.type === 'application').map((s) => (
+            <option key={s.id} value={`application:${s.id}`}>App: {s.name}</option>
+          ))}
+          <option value="global">Global</option>
+        </select>
         <select
           value={embeddingStatusFilter}
           onChange={(e) => setEmbeddingStatusFilter(e.target.value as 'pending' | 'completed' | 'failed' | '')}

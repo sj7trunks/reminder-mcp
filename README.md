@@ -6,16 +6,17 @@ An MCP (Model Context Protocol) server that gives AI assistants reliable reminde
 
 Poke is a great AI assistant, but its built-in reminders, tasks, and memory features had reliability issues. Rather than wait for fixes, I built this MCP server with the help of [Claude Code](https://claude.ai/claude-code) to handle those capabilities myself. The result is a self-hosted stack that makes Poke (and any MCP-compatible client) significantly more useful.
 
-The server exposes 15 MCP tools over Streamable HTTP, backed by a multi-user web dashboard for managing everything through a browser. It supports SQLite for simple setups and PostgreSQL for production, with optional Authentik SSO integration.
+The server exposes 17 MCP tools over Streamable HTTP, backed by a multi-user web dashboard for managing everything through a browser. It supports SQLite for simple setups and PostgreSQL for production, with optional Authentik SSO integration.
 
 ## Features
 
 - **Scheduled Reminders** — Time-based notifications with natural language parsing ("tomorrow at 2pm", "in 30 minutes"). Webhook push notifications when reminders trigger.
-- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search and optional semantic search (OpenAI embeddings + Redis).
+- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search and optional semantic search (OpenAI embeddings + Redis). Supports scoped memories (personal, team, application, global) with dedup-on-write.
 - **Task Tracking** — Long-running tasks with configurable check-in intervals (default 5 min). Periodic webhook notifications until completion.
 - **Activity History** — Full audit log of all events. Query by time range, type, and action with day/week/month summaries.
 - **Web Dashboard** — React frontend with stat cards, 30-day activity charts (Recharts), calendar view for reminders, and searchable memory list.
-- **Multi-User** — Per-user data isolation. MCP clients authenticate via API keys, the web frontend uses JWT cookies. First user is auto-promoted to admin.
+- **Teams & Applications** — Create teams, add members, and share memories across team members. Applications can be scoped to teams for per-agent knowledge.
+- **Multi-User** — Per-user data isolation with scoped sharing. MCP clients authenticate via API keys (user or team-scoped), the web frontend uses JWT cookies. First user is auto-promoted to admin.
 - **SSO Integration** — Optional Authentik forward auth via Traefik. Users are auto-created on first SSO login.
 - **API Key Management** — Create and revoke API keys from the web UI. Keys are SHA-256 hashed (never stored in plaintext).
 - **Admin Panel** — User management with admin role toggle. Full database backup (`.json.gz` download) and restore.
@@ -31,7 +32,7 @@ The server exposes 15 MCP tools over Streamable HTTP, backed by a multi-user web
 - **Multi-user ready** — Supports multiple users with data isolation, SSO, and admin controls. Run it for yourself or share it with others.
 - **Production-grade** — PostgreSQL, Docker, health checks, Traefik integration, and Authentik SSO. Not a toy — this runs in production.
 
-## MCP Tools (15)
+## MCP Tools (17)
 
 | Tool | Description |
 |------|-------------|
@@ -39,9 +40,11 @@ The server exposes 15 MCP tools over Streamable HTTP, backed by a multi-user web
 | `list_reminders` | List pending or all reminders |
 | `complete_reminder` | Mark a reminder as completed |
 | `cancel_reminder` | Cancel a pending reminder |
-| `remember` | Store something to recall later (with optional tags) |
-| `recall` | Retrieve stored memories (with search/tag filter) |
-| `forget` | Remove a memory item |
+| `remember` | Store a memory with optional scope, classification, and tags |
+| `recall` | Retrieve memories across scopes with search/tag/scope filter |
+| `forget` | Remove a memory (scope-based permission check) |
+| `promote_memory` | Copy a memory to a different scope (e.g., personal to team) |
+| `list_scopes` | List available memory scopes (personal, teams, apps, global) |
 | `start_task` | Begin tracking a long-running task |
 | `check_task` | Get status of a specific task |
 | `list_tasks` | List tasks with optional status filter |
@@ -232,20 +235,24 @@ reminder-mcp/
 │   ├── server.ts             # MCP server & tool registration
 │   ├── config/
 │   │   └── index.ts          # Zod-validated environment config
+│   ├── types/
+│   │   └── context.ts        # McpContext interface for scope/auth
 │   ├── db/
 │   │   ├── index.ts          # Knex connection (SQLite/PostgreSQL)
-│   │   ├── migrations/       # Database migrations (001-008)
-│   │   └── models/           # Zod schemas (User, ApiKey, Reminder, etc.)
+│   │   ├── migrations/       # Database migrations (001-010)
+│   │   └── models/           # Zod schemas (User, ApiKey, Team, Memory, etc.)
 │   ├── middleware/
 │   │   └── auth.ts           # JWT, API key, Authentik SSO middleware
 │   ├── routes/
 │   │   ├── auth.ts           # Register, login, logout, session
 │   │   ├── keys.ts           # API key management
 │   │   ├── reminders.ts      # Reminder CRUD
-│   │   ├── memories.ts       # Memory CRUD with search
+│   │   ├── memories.ts       # Memory CRUD with search + scope filtering
 │   │   ├── tasks.ts          # Task CRUD
 │   │   ├── stats.ts          # Dashboard statistics
-│   │   └── admin.ts          # User management, backup/restore
+│   │   ├── admin.ts          # User management, backup/restore
+│   │   ├── teams.ts          # Team CRUD + member management
+│   │   └── applications.ts   # Application CRUD
 │   ├── services/
 │   │   ├── scheduler.ts      # Background job scheduler (60s poll)
 │   │   ├── notifier.ts       # Webhook notifications (Poke format)
@@ -273,8 +280,9 @@ reminder-mcp/
 │   │       ├── Register.tsx  # Registration form
 │   │       ├── Dashboard.tsx # Stats + activity chart
 │   │       ├── Reminders.tsx # Calendar view
-│   │       ├── Memories.tsx  # Searchable memory list
-│   │       ├── Settings.tsx  # API keys + theme
+│   │       ├── Memories.tsx  # Searchable memory list with scope filter
+│   │       ├── Teams.tsx     # Team management + members
+│   │       ├── Settings.tsx  # API keys (user/team) + theme
 │   │       └── Admin.tsx     # User mgmt + backup/restore
 │   ├── vite.config.ts        # Vite config with dev proxy
 │   └── tailwind.config.js    # Tailwind CSS config

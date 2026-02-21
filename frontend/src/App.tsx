@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import Reminders from './pages/Reminders'
 import Memories from './pages/Memories'
 import Settings from './pages/Settings'
+import Teams from './pages/Teams'
 import Admin from './pages/Admin'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -80,6 +81,11 @@ export default function App() {
       <Route path="/memories" element={
         <ProtectedRoute>
           <Memories />
+        </ProtectedRoute>
+      } />
+      <Route path="/teams" element={
+        <ProtectedRoute>
+          <Teams />
         </ProtectedRoute>
       } />
       <Route path="/settings" element={

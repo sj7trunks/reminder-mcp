@@ -5,9 +5,11 @@ import bcrypt from 'bcryptjs';
 import { db } from '../db/index.js';
 import { config } from '../config/index.js';
 import type { User } from '../db/models/User.js';
+import type { McpContext } from '../types/context.js';
 
 export interface AuthRequest extends Request {
   user?: User;
+  mcpContext?: McpContext;
 }
 
 const SECRET_KEY = () => config.server.secretKey || 'development-secret-key';
@@ -110,6 +112,16 @@ export function requireApiKey(req: AuthRequest, res: Response, next: NextFunctio
             created_at: new Date(row.created_at as string),
             updated_at: new Date(row.updated_at as string),
           };
+
+          // Build McpContext from API key record
+          const scopeType = (keyRecord.scope_type as string) === 'team' ? 'team' : 'user';
+          req.mcpContext = {
+            userId: row.id as string,
+            scopeType: scopeType as 'user' | 'team',
+            teamId: scopeType === 'team' ? (keyRecord.team_id as string) : undefined,
+            isAdmin: row.is_admin === true || row.is_admin === 1,
+          };
+
           next();
         });
     })
