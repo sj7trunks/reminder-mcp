@@ -145,6 +145,7 @@ export function createServer(userId: string, context?: McpContext): McpServer {
       scope: RememberSchema.shape.scope,
       scope_id: RememberSchema.shape.scope_id,
       classification: RememberSchema.shape.classification,
+      chat_id: RememberSchema.shape.chat_id,
     },
     async (args) => {
       const input = RememberSchema.parse({ ...args, user_id: userId });
@@ -162,6 +163,7 @@ export function createServer(userId: string, context?: McpContext): McpServer {
       limit: RecallSchema.shape.limit,
       scope: RecallSchema.shape.scope,
       scope_id: RecallSchema.shape.scope_id,
+      chat_id: RecallSchema.shape.chat_id,
     },
     async (args) => {
       const input = RecallSchema.parse({ ...args, user_id: userId });

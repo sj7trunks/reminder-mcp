@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, type AuthRequest } from '../middleware/auth.js';
 import { remember, recall, forget, promoteMemory, listScopes } from '../tools/memory.js';
+import { db } from '../db/index.js';
 import type { McpContext } from '../types/context.js';
 
 const router = Router();
@@ -13,6 +14,20 @@ function webContext(req: AuthRequest): McpContext {
     isAdmin: req.user!.is_admin,
   };
 }
+
+// GET /api/memories/chats — list user's chats (must be before /:id)
+router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const rows = await db('chats')
+      .where('user_id', req.user!.id)
+      .select('id', 'created_at')
+      .orderBy('created_at', 'desc');
+    res.json({ chats: rows });
+  } catch (error) {
+    console.error('List chats error:', error);
+    res.status(500).json({ error: 'Failed to list chats' });
+  }
+});
 
 // GET /api/memories/scopes — list available scopes (must be before /:id)
 router.get('/scopes', requireAuth, async (req: AuthRequest, res) => {
@@ -32,6 +47,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
     const tags = req.query.tags as string | undefined;
     const scope = req.query.scope as string | undefined;
     const scopeId = req.query.scope_id as string | undefined;
+    const chatId = req.query.chat_id as string | undefined;
     const embeddingStatusRaw = req.query.embedding_status as string | undefined;
     const embeddingStatus = embeddingStatusRaw === 'pending'
       || embeddingStatusRaw === 'completed'
@@ -54,6 +70,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       limit: Number(limit) || 50,
       scope: parsedScope,
       scope_id: scopeId,
+      chat_id: chatId,
     }, webContext(req));
     res.json(result);
   } catch (error) {
@@ -65,7 +82,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
 // POST /api/memories — store a new memory
 router.post('/', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { content, tags, scope, scope_id, classification } = req.body;
+    const { content, tags, scope, scope_id, classification, chat_id } = req.body;
     const result = await remember({
       user_id: req.user!.id,
       content,
@@ -73,6 +90,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res) => {
       scope,
       scope_id,
       classification,
+      chat_id,
     }, webContext(req));
 
     if (!result.success) {

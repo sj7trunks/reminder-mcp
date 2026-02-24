@@ -11,7 +11,7 @@ The server exposes 20 MCP tools over Streamable HTTP, backed by a multi-user web
 ## Features
 
 - **Scheduled Reminders** — Time-based notifications with natural language parsing ("tomorrow at 2pm", "in 30 minutes"). Webhook push notifications when reminders trigger.
-- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search and optional semantic search (OpenAI embeddings + Redis). Supports scoped memories (personal, team, application, global) with dedup-on-write.
+- **Persistent Memory** — Store and recall information on demand. Tag-based organization with full-text search and optional semantic search (OpenAI embeddings + Redis). Supports scoped memories (personal, team, application, global) with dedup-on-write. Chat-scoped memories allow associating memories with conversation threads for context isolation.
 - **Task Tracking** — Long-running tasks with configurable check-in intervals (default 5 min). Periodic webhook notifications until completion.
 - **Activity History** — Full audit log of all events. Query by time range, type, and action with day/week/month summaries.
 - **Web Dashboard** — React frontend with stat cards, 30-day activity charts (Recharts), calendar view for reminders, and searchable memory list.
@@ -40,8 +40,8 @@ The server exposes 20 MCP tools over Streamable HTTP, backed by a multi-user web
 | `list_reminders` | List pending or all reminders |
 | `complete_reminder` | Mark a reminder as completed |
 | `cancel_reminder` | Cancel a pending reminder |
-| `remember` | Store a memory with optional scope, classification, and tags |
-| `recall` | Retrieve memories across scopes with search/tag/scope filter |
+| `remember` | Store a memory with optional scope, classification, tags, and chat_id |
+| `recall` | Retrieve memories across scopes with search/tag/scope/chat_id filter |
 | `forget` | Remove a memory (scope-based permission check) |
 | `promote_memory` | Copy a memory to a different scope (e.g., personal to team) |
 | `list_scopes` | List available memory scopes (personal, teams, apps, global) |

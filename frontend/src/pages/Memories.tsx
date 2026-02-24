@@ -5,9 +5,11 @@ import {
   createMemory,
   deleteMemory,
   getMemoryScopes,
+  getChats,
   type Memory,
   type MemoryScope,
   type MemoryScopeInfo,
+  type Chat,
 } from '../api/client'
 import { format } from 'date-fns'
 
@@ -47,6 +49,11 @@ function MemoryCard({ memory, onDelete }: { memory: Memory; onDelete: (id: strin
       </div>
       <div className="mt-3 flex items-center gap-2 flex-wrap">
         <ScopeBadge scope={scope} />
+        {memory.chat_id && (
+          <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400">
+            Chat
+          </span>
+        )}
         {memory.classification && (
           <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
             {memory.classification}
@@ -90,12 +97,14 @@ export default function Memories() {
   const [embeddingStatusFilter, setEmbeddingStatusFilter] = useState<'pending' | 'completed' | 'failed' | ''>('')
   const [scopeFilter, setScopeFilter] = useState('')
   const [scopeIdFilter, setScopeIdFilter] = useState('')
+  const [chatFilter, setChatFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [newContent, setNewContent] = useState('')
   const [newTags, setNewTags] = useState('')
   const [newScope, setNewScope] = useState<MemoryScope>('personal')
   const [newScopeId, setNewScopeId] = useState('')
   const [newClassification, setNewClassification] = useState('')
+  const [newChatId, setNewChatId] = useState('')
   const queryClient = useQueryClient()
 
   const { data: scopesData } = useQuery({
@@ -103,18 +112,25 @@ export default function Memories() {
     queryFn: getMemoryScopes,
   })
 
+  const { data: chatsData } = useQuery({
+    queryKey: ['chats'],
+    queryFn: getChats,
+  })
+
   const scopes = scopesData?.scopes ?? []
+  const chats = chatsData?.chats ?? []
   // Scopes that have an ID (teams and applications)
   const namedScopes = scopes.filter((s) => s.id)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['memories', searchQuery, tagFilter, embeddingStatusFilter, scopeFilter, scopeIdFilter],
+    queryKey: ['memories', searchQuery, tagFilter, embeddingStatusFilter, scopeFilter, scopeIdFilter, chatFilter],
     queryFn: () => getMemories({
       query: searchQuery || undefined,
       tags: tagFilter || undefined,
       embedding_status: embeddingStatusFilter || undefined,
       scope: (scopeFilter as MemoryScope) || undefined,
       scope_id: scopeIdFilter || undefined,
+      chat_id: chatFilter || undefined,
     }),
   })
 
@@ -134,6 +150,7 @@ export default function Memories() {
       scope: newScope,
       scope_id: newScopeId || undefined,
       classification: newClassification || undefined,
+      chat_id: newChatId || undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['memories'] })
@@ -143,6 +160,7 @@ export default function Memories() {
       setNewScope('personal')
       setNewScopeId('')
       setNewClassification('')
+      setNewChatId('')
     },
   })
 
@@ -236,6 +254,18 @@ export default function Memories() {
               <option value="tactical">Tactical</option>
               <option value="observational">Observational</option>
             </select>
+            <select
+              value={newChatId}
+              onChange={(e) => setNewChatId(e.target.value)}
+              className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            >
+              <option value="">No chat</option>
+              {chats.map((chat) => (
+                <option key={chat.id} value={chat.id}>
+                  Chat {format(new Date(chat.created_at), 'MMM d, yyyy HH:mm')}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex gap-2">
             <button
@@ -278,6 +308,18 @@ export default function Memories() {
             <option key={s.id} value={`application:${s.id}`}>App: {s.name}</option>
           ))}
           <option value="global">Global</option>
+        </select>
+        <select
+          value={chatFilter}
+          onChange={(e) => setChatFilter(e.target.value)}
+          className="rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+        >
+          <option value="">All Chats</option>
+          {chats.map((chat) => (
+            <option key={chat.id} value={chat.id}>
+              Chat {format(new Date(chat.created_at), 'MMM d, yyyy HH:mm')}
+            </option>
+          ))}
         </select>
         <select
           value={embeddingStatusFilter}

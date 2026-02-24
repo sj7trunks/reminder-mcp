@@ -167,6 +167,12 @@ export interface Memory {
   author_id?: string | null
   classification?: 'foundational' | 'tactical' | 'observational' | null
   retrieval_count?: number
+  chat_id?: string | null
+  created_at: string
+}
+
+export interface Chat {
+  id: string
   created_at: string
 }
 
@@ -183,6 +189,7 @@ export async function getMemories(params?: {
   limit?: number
   scope?: MemoryScope
   scope_id?: string
+  chat_id?: string
 }): Promise<{ memories: Memory[] }> {
   const searchParams = new URLSearchParams()
   if (params?.query) searchParams.set('query', params.query)
@@ -191,6 +198,7 @@ export async function getMemories(params?: {
   if (params?.limit) searchParams.set('limit', String(params.limit))
   if (params?.scope) searchParams.set('scope', params.scope)
   if (params?.scope_id) searchParams.set('scope_id', params.scope_id)
+  if (params?.chat_id) searchParams.set('chat_id', params.chat_id)
 
   const response = await fetch(`${API_BASE}/memories?${searchParams}`, {
     credentials: 'include',
@@ -204,6 +212,7 @@ export async function createMemory(data: {
   scope?: MemoryScope
   scope_id?: string
   classification?: string
+  chat_id?: string
 }): Promise<{ success: boolean; memory?: Memory; error?: string }> {
   const response = await fetch(`${API_BASE}/memories`, {
     method: 'POST',
@@ -238,6 +247,13 @@ export async function promoteMemory(id: string, data: {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify(data),
+  })
+  return handleResponse(response)
+}
+
+export async function getChats(): Promise<{ chats: Chat[] }> {
+  const response = await fetch(`${API_BASE}/memories/chats`, {
+    credentials: 'include',
   })
   return handleResponse(response)
 }

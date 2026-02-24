@@ -169,6 +169,13 @@ All mutations log to the activities table for the dashboard timeline.
 | team_id | UUID | Nullable FK to teams, CASCADE |
 | created_at | TIMESTAMP | |
 
+### chats
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| user_id | UUID | FK to users, CASCADE, indexed |
+| created_at | TIMESTAMP | Not null |
+
 ### memories
 | Column | Type | Notes |
 |--------|------|-------|
@@ -187,6 +194,7 @@ All mutations log to the activities table for the dashboard timeline.
 | retrieval_count | INTEGER | Default 0 |
 | last_retrieved_at | TIMESTAMP | Nullable |
 | classification | STRING(20) | foundational/tactical/observational |
+| chat_id | UUID | Nullable FK to chats, SET NULL, indexed |
 | created_at | TIMESTAMP | |
 
 ### reminders, tasks, activities
@@ -207,9 +215,11 @@ See migration files in `src/db/migrations/` for full schemas. All have `user_id`
 | `routes/applications.ts` | `/api/applications` | JWT | Application CRUD |
 
 ### Memory-Specific Endpoints
+- `GET /api/memories/chats` — List user's chats (id, created_at)
 - `GET /api/memories/scopes` — List available scopes (personal + user's teams/apps + global)
 - `POST /api/memories/:id/promote` — Copy a memory to a different scope
 - Scope filtering: `?scope=team&scope_id=<uuid>` on GET
+- Chat filtering: `?chat_id=<uuid>` on GET
 
 ### Admin Backup/Restore
 - `GET /api/admin/backup` — Downloads all tables as `.json.gz` (gzipped JSON, Node built-in `zlib`)
@@ -221,8 +231,8 @@ See migration files in `src/db/migrations/` for full schemas. All have `user_id`
 ### Memory Tools
 | Tool | Description |
 |------|-------------|
-| `remember` | Store a memory with optional scope, scope_id, classification |
-| `recall` | Search memories across scopes with optional scope/scope_id filter |
+| `remember` | Store a memory with optional scope, scope_id, classification, chat_id |
+| `recall` | Search memories across scopes with optional scope/scope_id/chat_id filter |
 | `forget` | Delete a memory (permission-checked by scope) |
 | `promote_memory` | Copy a memory to a different scope |
 | `list_scopes` | List all available scopes for the user |
@@ -348,3 +358,6 @@ Before deploying changes:
 9. Create team via API, add member, create team memory
 10. Recall with user key returns personal + team + global memories
 11. Forget team memory: author succeeds, non-author non-admin denied
+12. MCP remember with chat_id: verify chat auto-created
+13. MCP recall with chat_id filter: verify only matching memories returned
+14. Web frontend: verify chat dropdown populated, filtering works, chat badge displays

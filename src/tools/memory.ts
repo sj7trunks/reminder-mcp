@@ -11,6 +11,18 @@ import { enqueueEmbeddingJob } from '../services/embedding-worker.js';
 const ScopeEnum = z.enum(['personal', 'team', 'application', 'global']);
 const ClassificationEnum = z.enum(['foundational', 'tactical', 'observational']);
 
+/** Ensure a chat exists for the given user and chat ID (idempotent) */
+async function ensureChatExists(userId: string, chatId: string): Promise<void> {
+  const existing = await db('chats').where('id', chatId).first();
+  if (!existing) {
+    await db('chats').insert({
+      id: chatId,
+      user_id: userId,
+      created_at: new Date().toISOString(),
+    });
+  }
+}
+
 export const RememberSchema = z.object({
   user_id: z.string(),
   content: z.string().min(1).describe('What to remember'),
@@ -18,6 +30,7 @@ export const RememberSchema = z.object({
   scope: ScopeEnum.optional().describe('Memory scope: personal, team, application, or global'),
   scope_id: z.string().uuid().optional().describe('Team or application ID for scoped memories'),
   classification: ClassificationEnum.optional().describe('Memory classification: foundational, tactical, or observational'),
+  chat_id: z.string().uuid().optional().describe('Optional chat ID to associate this memory with a conversation'),
 });
 
 export const RecallSchema = z.object({
@@ -28,6 +41,7 @@ export const RecallSchema = z.object({
   limit: z.number().optional().default(50).describe('Maximum number of results'),
   scope: ScopeEnum.optional().describe('Filter by scope'),
   scope_id: z.string().uuid().optional().describe('Filter by specific team or application ID'),
+  chat_id: z.string().uuid().optional().describe('Filter by specific chat ID'),
 });
 
 export const ForgetSchema = z.object({
@@ -157,6 +171,11 @@ export async function remember(
     scopeId = context.teamId;
   }
 
+  // Auto-create chat if chat_id is provided
+  if (input.chat_id) {
+    await ensureChatExists(input.user_id, input.chat_id);
+  }
+
   const id = uuid();
   const now = new Date();
   const tags = input.tags ?? [];
@@ -235,6 +254,7 @@ export async function remember(
     retrieval_count: 0,
     last_retrieved_at: null,
     classification: input.classification ?? null,
+    chat_id: input.chat_id ?? null,
     created_at: now,
   };
 
@@ -277,6 +297,7 @@ export async function remember(
       tags,
       scope,
       scope_id: scopeId,
+      chat_id: input.chat_id,
       merged_from: mergedFrom,
     }),
     created_at: now.toISOString(),
@@ -324,6 +345,7 @@ function mapMemoryRow(row: Record<string, unknown>): Memory {
     retrieval_count: Number(row.retrieval_count || 0),
     last_retrieved_at: row.last_retrieved_at ? new Date(row.last_retrieved_at as string) : null,
     classification: (row.classification as Memory['classification']) ?? null,
+    chat_id: (row.chat_id as string | null) ?? null,
     created_at: new Date(row.created_at as string),
   };
 }
@@ -407,6 +429,11 @@ async function recallPostgresHybrid(
       embeddingFilterSql = ' AND m.embedding_status = ?';
       bindings.push(input.embedding_status);
     }
+    let chatFilterSql = '';
+    if (input.chat_id) {
+      chatFilterSql = ' AND m.chat_id = ?';
+      bindings.push(input.chat_id);
+    }
     bindings.push(limit);
 
     const raw = await db.raw(`
@@ -415,6 +442,7 @@ async function recallPostgresHybrid(
       WHERE ${scopeResult.where}
         AND m.superseded_by IS NULL
         ${embeddingFilterSql}
+        ${chatFilterSql}
       ORDER BY m.created_at DESC
       LIMIT ?
     `, bindings);
@@ -431,6 +459,11 @@ async function recallPostgresHybrid(
     if (input.embedding_status) {
       embeddingFilterSql = ' AND m.embedding_status = ?';
       bindings.push(input.embedding_status);
+    }
+    let chatFilterSql = '';
+    if (input.chat_id) {
+      chatFilterSql = ' AND m.chat_id = ?';
+      bindings.push(input.chat_id);
     }
     bindings.push(limit);
 
@@ -451,6 +484,7 @@ async function recallPostgresHybrid(
       WHERE ${scopeResult.where}
         AND m.superseded_by IS NULL
         ${embeddingFilterSql}
+        ${chatFilterSql}
       ORDER BY hybrid_score DESC, m.created_at DESC
       LIMIT ?
     `, bindings);
@@ -464,6 +498,11 @@ async function recallPostgresHybrid(
       embeddingFilterSql = ' AND m.embedding_status = ?';
       bindings.push(input.embedding_status);
     }
+    let chatFilterSql = '';
+    if (input.chat_id) {
+      chatFilterSql = ' AND m.chat_id = ?';
+      bindings.push(input.chat_id);
+    }
     bindings.push(limit);
 
     const raw = await db.raw(`
@@ -473,6 +512,7 @@ async function recallPostgresHybrid(
         AND m.superseded_by IS NULL
         AND m.content LIKE ?
         ${embeddingFilterSql}
+        ${chatFilterSql}
       ORDER BY m.created_at DESC
       LIMIT ?
     `, bindings);
@@ -517,6 +557,11 @@ export async function recall(
     if (input.embedding_status) {
       rawSql += ' AND m.embedding_status = ?';
       bindings.push(input.embedding_status);
+    }
+
+    if (input.chat_id) {
+      rawSql += ' AND m.chat_id = ?';
+      bindings.push(input.chat_id);
     }
 
     rawSql += ' ORDER BY m.created_at DESC LIMIT ?';
