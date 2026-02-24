@@ -71,12 +71,12 @@ app.post('/mcp', requireApiKey, async (req: AuthRequest, res: Response) => {
 
       // 2. Override req.get() method
       const originalGet = req.get.bind(req);
-      req.get = function(name: string): string | undefined {
+      req.get = ((name: string) => {
         if (name.toLowerCase() === 'accept') {
           return requiredAccept;
         }
         return originalGet(name);
-      };
+      }) as typeof req.get;
 
       // 3. Override req.header() method (alias for get)
       req.header = req.get;

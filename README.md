@@ -6,7 +6,7 @@ An MCP (Model Context Protocol) server that gives AI assistants reliable reminde
 
 Poke is a great AI assistant, but its built-in reminders, tasks, and memory features had reliability issues. Rather than wait for fixes, I built this MCP server with the help of [Claude Code](https://claude.ai/claude-code) to handle those capabilities myself. The result is a self-hosted stack that makes Poke (and any MCP-compatible client) significantly more useful.
 
-The server exposes 17 MCP tools over Streamable HTTP, backed by a multi-user web dashboard for managing everything through a browser. It supports SQLite for simple setups and PostgreSQL for production, with optional Authentik SSO integration.
+The server exposes 20 MCP tools over Streamable HTTP, backed by a multi-user web dashboard for managing everything through a browser. It supports SQLite for simple setups and PostgreSQL for production, with optional Authentik SSO integration.
 
 ## Features
 
@@ -22,7 +22,7 @@ The server exposes 17 MCP tools over Streamable HTTP, backed by a multi-user web
 - **Admin Panel** — User management with admin role toggle. Full database backup (`.json.gz` download) and restore.
 - **Dark Mode** — System preference detection with manual light/dark/system toggle.
 - **Dual Database Support** — SQLite for development and simple deployments, PostgreSQL for production.
-- **Webhook Notifications** — Push notifications to Poke (or any endpoint) when reminders trigger or tasks need check-ins.
+- **Webhook Notifications** — Push notifications to Poke (or any endpoint) when reminders trigger or tasks need check-ins. Supports dynamic webhook registration via MCP tools for programmatic consumers (auto-unregisters after consecutive failures).
 
 ## Why This Project Is Useful
 
@@ -32,7 +32,7 @@ The server exposes 17 MCP tools over Streamable HTTP, backed by a multi-user web
 - **Multi-user ready** — Supports multiple users with data isolation, SSO, and admin controls. Run it for yourself or share it with others.
 - **Production-grade** — PostgreSQL, Docker, health checks, Traefik integration, and Authentik SSO. Not a toy — this runs in production.
 
-## MCP Tools (17)
+## MCP Tools (20)
 
 | Tool | Description |
 |------|-------------|
@@ -50,6 +50,9 @@ The server exposes 17 MCP tools over Streamable HTTP, backed by a multi-user web
 | `list_tasks` | List tasks with optional status filter |
 | `complete_task` | Mark a task as completed |
 | `update_task` | Update task status or add notes |
+| `register_webhook` | Register a URL to receive push notifications (with optional API key and event filter) |
+| `unregister_webhook` | Remove a registered webhook URL |
+| `list_webhooks` | List all registered webhooks for this user |
 | `get_pending_checkups` | Get all due reminders and tasks needing check-in |
 | `get_activity` | Query activity history by time range |
 | `get_summary` | Get summary of recent activity |

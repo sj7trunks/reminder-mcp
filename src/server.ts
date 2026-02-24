@@ -46,6 +46,14 @@ import {
   getSummary,
 } from './tools/history.js';
 
+import {
+  RegisterWebhookSchema,
+  UnregisterWebhookSchema,
+  registerWebhookHandler,
+  unregisterWebhookHandler,
+  listWebhooksHandler,
+} from './tools/webhooks.js';
+
 import { getPendingCheckups } from './services/scheduler.js';
 import { getServerStatus } from './resources/status.js';
 
@@ -271,6 +279,46 @@ export function createServer(userId: string, context?: McpContext): McpServer {
     async () => {
       const checkups = await getPendingCheckups();
       return toResponse({ checkups });
+    }
+  );
+
+  // ============ WEBHOOK TOOLS ============
+
+  server.tool(
+    'register_webhook',
+    'Register a URL to receive push notifications for reminders and tasks. Re-registering the same URL updates settings and resets failure count.',
+    {
+      url: RegisterWebhookSchema.shape.url,
+      api_key: RegisterWebhookSchema.shape.api_key,
+      events: RegisterWebhookSchema.shape.events,
+    },
+    async (args) => {
+      const input = RegisterWebhookSchema.parse({ ...args, user_id: userId });
+      const result = await registerWebhookHandler(input);
+      return toResponse(result);
+    }
+  );
+
+  server.tool(
+    'unregister_webhook',
+    'Remove a previously registered webhook URL',
+    {
+      url: UnregisterWebhookSchema.shape.url,
+    },
+    async (args) => {
+      const input = UnregisterWebhookSchema.parse({ ...args, user_id: userId });
+      const result = await unregisterWebhookHandler(input);
+      return toResponse(result);
+    }
+  );
+
+  server.tool(
+    'list_webhooks',
+    'List all registered webhook URLs for this user',
+    {},
+    async () => {
+      const result = await listWebhooksHandler({ user_id: userId });
+      return toResponse(result);
     }
   );
 

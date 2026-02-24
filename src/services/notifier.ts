@@ -1,4 +1,5 @@
 import { config } from '../config/index.js';
+import { deliverToRegisteredWebhooks } from './webhook-registry.js';
 
 export interface Notification {
   type: 'reminder' | 'task_checkin' | 'task_complete';
@@ -10,7 +11,12 @@ export interface Notification {
 }
 
 export async function sendNotification(notification: Notification): Promise<boolean> {
-  // If webhook is configured, send notification
+  // Deliver to dynamically registered webhooks (fire-and-forget)
+  deliverToRegisteredWebhooks(notification).catch((err) => {
+    console.error('[webhook-registry] Unexpected delivery error:', err);
+  });
+
+  // If static webhook is configured, send notification (Poke format)
   if (config.webhook.url) {
     try {
       const headers: Record<string, string> = {
@@ -39,7 +45,7 @@ export async function sendNotification(notification: Notification): Promise<bool
     }
   }
 
-  // No webhook configured - notification will be retrieved via polling
+  // No static webhook configured - notification will be retrieved via polling
   console.log(`[Notification] ${notification.type}: ${notification.title}`);
   return true;
 }

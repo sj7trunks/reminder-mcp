@@ -78,7 +78,8 @@ interface McpContext {
 
 ### Services
 - `scheduler.ts` - Background polling (60s) for due reminders/tasks, triggers webhook notifications
-- `notifier.ts` - Sends webhooks to Poke (`{"message": "..."}` with Bearer token)
+- `notifier.ts` - Sends webhooks to Poke (`{"message": "..."}` with Bearer token) + delivers to dynamically registered webhooks
+- `webhook-registry.ts` - In-memory webhook registry for dynamic webhook registration via MCP tools. Auto-unregisters after 3 consecutive failures. 10s delivery timeout.
 - `timezone.ts` - Timezone conversion and relative time parsing
 - `embedding.ts` - OpenAI text-embedding-3-small integration for semantic search
 - `embedding-worker.ts` - Background worker for generating embeddings on new/updated memories
@@ -225,6 +226,13 @@ See migration files in `src/db/migrations/` for full schemas. All have `user_id`
 | `forget` | Delete a memory (permission-checked by scope) |
 | `promote_memory` | Copy a memory to a different scope |
 | `list_scopes` | List all available scopes for the user |
+
+### Webhook Tools
+| Tool | Description |
+|------|-------------|
+| `register_webhook` | Register a URL to receive push notifications (with optional API key and event filter) |
+| `unregister_webhook` | Remove a registered webhook URL |
+| `list_webhooks` | List all registered webhooks for the user |
 
 ### Other Tools
 | Tool | Description |
