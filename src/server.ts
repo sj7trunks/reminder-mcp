@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { config } from './config/index.js';
 
 // Import tools
 import {
@@ -75,9 +76,15 @@ function toResponse(result: unknown): { content: [{ type: 'text'; text: string }
 }
 
 export function createServer(userId: string, context?: McpContext): McpServer {
+  const hasSemanticSearch = config.database.type === 'postgres' && !!config.openai.apiKey;
+
   const server = new McpServer({
     name: 'reminder-mcp',
     version: '1.0.0',
+  }, {
+    instructions: hasSemanticSearch
+      ? 'This server supports semantic search. Use natural language queries with the recall tool for best results. Near-duplicate memories are automatically detected and superseded.'
+      : 'This server uses keyword matching only. Use specific keywords or tags with the recall tool for best results.',
   });
 
   // ============ REMINDER TOOLS ============
@@ -146,6 +153,7 @@ export function createServer(userId: string, context?: McpContext): McpServer {
       scope_id: RememberSchema.shape.scope_id,
       classification: RememberSchema.shape.classification,
       chat_id: RememberSchema.shape.chat_id,
+      supersedes: RememberSchema.shape.supersedes,
     },
     async (args) => {
       const input = RememberSchema.parse({ ...args, user_id: userId });
@@ -156,7 +164,9 @@ export function createServer(userId: string, context?: McpContext): McpServer {
 
   server.tool(
     'recall',
-    'Get all stored memories with optional filter. Without scope filter, returns personal + team + global memories.',
+    hasSemanticSearch
+      ? 'Search memories using semantic similarity. Natural language queries work well. Without scope filter, returns personal + team + global memories.'
+      : 'Search memories by keyword matching. Without scope filter, returns personal + team + global memories.',
     {
       query: RecallSchema.shape.query,
       tags: RecallSchema.shape.tags,

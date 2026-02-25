@@ -18,7 +18,7 @@ export const MemorySchema = z.object({
   retrieval_count: z.number().default(0),
   last_retrieved_at: z.coerce.date().nullable().optional(),
   classification: z.enum(['foundational', 'tactical', 'observational']).nullable().optional(),
-  chat_id: z.string().uuid().nullable().optional(),
+  chat_id: z.string().nullable().optional(),
   created_at: z.coerce.date(),
 });
 
@@ -31,7 +31,7 @@ export const CreateMemoryInput = z.object({
   scope: z.enum(['personal', 'team', 'application', 'global']).optional().default('personal'),
   scope_id: z.string().uuid().optional(),
   classification: z.enum(['foundational', 'tactical', 'observational']).optional(),
-  chat_id: z.string().uuid().optional(),
+  chat_id: z.string().optional(),
 });
 
 export type CreateMemoryInput = z.infer<typeof CreateMemoryInput>;

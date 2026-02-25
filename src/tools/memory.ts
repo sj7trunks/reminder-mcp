@@ -30,7 +30,8 @@ export const RememberSchema = z.object({
   scope: ScopeEnum.optional().describe('Memory scope: personal, team, application, or global'),
   scope_id: z.string().uuid().optional().describe('Team or application ID for scoped memories'),
   classification: ClassificationEnum.optional().describe('Memory classification: foundational, tactical, or observational'),
-  chat_id: z.string().uuid().optional().describe('Optional chat ID to associate this memory with a conversation'),
+  chat_id: z.string().min(1).optional().describe('Optional chat ID to associate this memory with a conversation'),
+  supersedes: z.string().min(1).optional().describe('ID of an existing memory this one replaces (marks the old memory as superseded)'),
 });
 
 export const RecallSchema = z.object({
@@ -41,7 +42,7 @@ export const RecallSchema = z.object({
   limit: z.number().optional().default(50).describe('Maximum number of results'),
   scope: ScopeEnum.optional().describe('Filter by scope'),
   scope_id: z.string().uuid().optional().describe('Filter by specific team or application ID'),
-  chat_id: z.string().uuid().optional().describe('Filter by specific chat ID'),
+  chat_id: z.string().min(1).optional().describe('Filter by specific chat ID'),
 });
 
 export const ForgetSchema = z.object({
@@ -183,6 +184,20 @@ export async function remember(
 
   let mergedFrom: string | undefined;
 
+  // Explicit supersedes — agent specified which memory this replaces
+  if (input.supersedes) {
+    const oldMemory = await db('memories')
+      .where('id', input.supersedes)
+      .whereNull('superseded_by')
+      .first();
+    if (oldMemory) {
+      mergedFrom = input.supersedes;
+      await db('memories')
+        .where('id', input.supersedes)
+        .update({ superseded_by: id });
+    }
+  }
+
   // Phase 7: Dedup — check for near-duplicate in same scope (Postgres + OpenAI only)
   const isPostgres = config.database.type === 'postgres';
   let precomputedEmbedding: number[] | undefined;
@@ -191,49 +206,53 @@ export async function remember(
     try {
       const newEmbedding = await generateEmbedding(input.content);
       precomputedEmbedding = newEmbedding;
-      const embeddingSql = pgvector.toSql(newEmbedding);
 
-      // Build scope filter for dedup query
-      let scopeFilter: string;
-      const bindings: unknown[] = [embeddingSql];
+      // Only run automatic dedup if agent didn't explicitly supersede
+      if (!mergedFrom) {
+        const embeddingSql = pgvector.toSql(newEmbedding);
 
-      if (scope === 'personal') {
-        scopeFilter = "m.scope = 'personal' AND m.user_id = ?";
-        bindings.push(input.user_id);
-      } else if (scope === 'team' || scope === 'application') {
-        scopeFilter = 'm.scope = ? AND m.scope_id = ?';
-        bindings.push(scope, scopeId);
-      } else {
-        scopeFilter = "m.scope = 'global'";
-      }
+        // Build scope filter for dedup query
+        let scopeFilter: string;
+        const bindings: unknown[] = [embeddingSql];
 
-      const dupResult = await db.raw(`
-        WITH query_embedding AS (
-          SELECT ?::vector(1536) AS embedding
-        )
-        SELECT m.id,
-          1 - (m.embedding <=> (SELECT embedding FROM query_embedding)) AS similarity
-        FROM memories m
-        WHERE ${scopeFilter}
-          AND m.embedding IS NOT NULL
-          AND m.superseded_by IS NULL
-        ORDER BY similarity DESC
-        LIMIT 1
-      `, bindings);
+        if (scope === 'personal') {
+          scopeFilter = "m.scope = 'personal' AND m.user_id = ?";
+          bindings.push(input.user_id);
+        } else if (scope === 'team' || scope === 'application') {
+          scopeFilter = 'm.scope = ? AND m.scope_id = ?';
+          bindings.push(scope, scopeId);
+        } else {
+          scopeFilter = "m.scope = 'global'";
+        }
 
-      if (dupResult.rows?.length > 0) {
-        const topMatch = dupResult.rows[0];
-        const similarity = Number(topMatch.similarity);
-        if (similarity > 0.9) {
-          // Mark old memory as superseded by new one
-          mergedFrom = topMatch.id as string;
-          await db('memories')
-            .where('id', mergedFrom)
-            .update({ superseded_by: id });
+        const dupResult = await db.raw(`
+          WITH query_embedding AS (
+            SELECT ?::vector(1536) AS embedding
+          )
+          SELECT m.id,
+            1 - (m.embedding <=> (SELECT embedding FROM query_embedding)) AS similarity
+          FROM memories m
+          WHERE ${scopeFilter}
+            AND m.embedding IS NOT NULL
+            AND m.superseded_by IS NULL
+          ORDER BY similarity DESC
+          LIMIT 1
+        `, bindings);
+
+        if (dupResult.rows?.length > 0) {
+          const topMatch = dupResult.rows[0];
+          const similarity = Number(topMatch.similarity);
+          if (similarity > 0.9) {
+            // Mark old memory as superseded by new one
+            mergedFrom = topMatch.id as string;
+            await db('memories')
+              .where('id', mergedFrom)
+              .update({ superseded_by: id });
+          }
         }
       }
     } catch (error) {
-      console.error('Dedup check failed, continuing with normal insert:', error);
+      console.error('Dedup/embedding failed, continuing with normal insert:', error);
     }
   }
 

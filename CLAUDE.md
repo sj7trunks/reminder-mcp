@@ -67,13 +67,15 @@ interface McpContext {
 
 **API key scoping**: User keys default to personal scope. Team keys (scope_type='team') default to team scope. The context is built in `requireApiKey` middleware and passed to `createServer()`.
 
-**Dedup on write**: When Postgres + OpenAI are configured, `remember()` generates an embedding before insert and checks for cosine similarity > 0.9 in the same scope. If a near-duplicate exists, the old memory gets `superseded_by` set to the new ID. The pre-computed embedding is stored directly (skipping the queue).
+**Dedup on write**: When Postgres + OpenAI are configured, `remember()` generates an embedding before insert and checks for cosine similarity > 0.9 in the same scope. If a near-duplicate exists, the old memory gets `superseded_by` set to the new ID. The pre-computed embedding is stored directly (skipping the queue). Agents can also explicitly supersede a memory by passing `supersedes: "<memory_id>"` to `remember()`, which skips the similarity check and guarantees the chain (useful for session summaries).
+
+**MCP instructions**: The `initialize` response includes an `instructions` field that tells the connecting client whether semantic search or keyword-only matching is available. The `recall` tool description also adapts dynamically based on the runtime configuration.
 
 ### Database Layer
 - Knex.js query builder
 - SQLite (`better-sqlite3`) for development
 - PostgreSQL (`pg`) for production
-- Migrations in `src/db/migrations/` (auto-detects .ts vs .js at runtime)
+- Migrations in `src/db/migrations/` (001-013, auto-detects .ts vs .js at runtime)
 - Models use Zod schemas in `src/db/models/`
 
 ### Services
@@ -172,7 +174,7 @@ All mutations log to the activities table for the dashboard timeline.
 ### chats
 | Column | Type | Notes |
 |--------|------|-------|
-| id | UUID | Primary key |
+| id | VARCHAR(255) | Primary key (accepts UUIDs, CUIDs, or any string ID) |
 | user_id | UUID | FK to users, CASCADE, indexed |
 | created_at | TIMESTAMP | Not null |
 
@@ -194,7 +196,7 @@ All mutations log to the activities table for the dashboard timeline.
 | retrieval_count | INTEGER | Default 0 |
 | last_retrieved_at | TIMESTAMP | Nullable |
 | classification | STRING(20) | foundational/tactical/observational |
-| chat_id | UUID | Nullable FK to chats, SET NULL, indexed |
+| chat_id | VARCHAR(255) | Nullable FK to chats, SET NULL, indexed |
 | created_at | TIMESTAMP | |
 
 ### reminders, tasks, activities
@@ -219,7 +221,7 @@ See migration files in `src/db/migrations/` for full schemas. All have `user_id`
 - `GET /api/memories/scopes` — List available scopes (personal + user's teams/apps + global)
 - `POST /api/memories/:id/promote` — Copy a memory to a different scope
 - Scope filtering: `?scope=team&scope_id=<uuid>` on GET
-- Chat filtering: `?chat_id=<uuid>` on GET
+- Chat filtering: `?chat_id=<string>` on GET
 
 ### Admin Backup/Restore
 - `GET /api/admin/backup` — Downloads all tables as `.json.gz` (gzipped JSON, Node built-in `zlib`)
@@ -231,7 +233,7 @@ See migration files in `src/db/migrations/` for full schemas. All have `user_id`
 ### Memory Tools
 | Tool | Description |
 |------|-------------|
-| `remember` | Store a memory with optional scope, scope_id, classification, chat_id |
+| `remember` | Store a memory with optional scope, scope_id, classification, chat_id, supersedes |
 | `recall` | Search memories across scopes with optional scope/scope_id/chat_id filter |
 | `forget` | Delete a memory (permission-checked by scope) |
 | `promote_memory` | Copy a memory to a different scope |
@@ -358,6 +360,8 @@ Before deploying changes:
 9. Create team via API, add member, create team memory
 10. Recall with user key returns personal + team + global memories
 11. Forget team memory: author succeeds, non-author non-admin denied
-12. MCP remember with chat_id: verify chat auto-created
+12. MCP remember with chat_id: verify chat auto-created (UUIDs and CUIDs both accepted)
 13. MCP recall with chat_id filter: verify only matching memories returned
 14. Web frontend: verify chat dropdown populated, filtering works, chat badge displays
+15. MCP remember with supersedes: verify old memory gets superseded_by set, new memory created
+16. MCP recall after supersede: verify only the new memory is returned
