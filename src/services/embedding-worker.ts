@@ -2,7 +2,7 @@ import Queue from 'bull';
 import pgvector from 'pgvector';
 import { config } from '../config/index.js';
 import { db } from '../db/index.js';
-import { EMBEDDING_MODEL, generateEmbedding } from './embedding.js';
+import { EMBEDDING_MODEL, isEmbeddingEnabled, generateEmbedding } from './embedding.js';
 
 interface EmbeddingJobData {
   memoryId: string;
@@ -15,14 +15,12 @@ const BACKOFF_DELAY_MS = 60_000;
 let queue: Queue.Queue<EmbeddingJobData> | null = null;
 let isWorkerStarted = false;
 
-function canUseEmbeddings(): boolean {
-  return config.database.type === 'postgres'
-    && Boolean(config.redis.url)
-    && Boolean(config.openai.apiKey);
+function canUseQueue(): boolean {
+  return isEmbeddingEnabled() && Boolean(config.redis.url);
 }
 
 function getQueue(): Queue.Queue<EmbeddingJobData> | null {
-  if (!canUseEmbeddings()) {
+  if (!canUseQueue()) {
     return null;
   }
 
@@ -47,21 +45,32 @@ export async function processMemoryEmbedding(memoryId: string, content: string):
 }
 
 export async function enqueueEmbeddingJob(memoryId: string, content: string): Promise<boolean> {
-  const embeddingQueue = getQueue();
-  if (!embeddingQueue) {
+  if (!isEmbeddingEnabled()) {
     return false;
   }
 
-  await embeddingQueue.add(
-    { memoryId, content },
-    {
-      attempts: MAX_ATTEMPTS,
-      backoff: { type: 'exponential', delay: BACKOFF_DELAY_MS },
-      removeOnComplete: 1000,
-      removeOnFail: 1000,
-    }
-  );
+  const embeddingQueue = getQueue();
+  if (embeddingQueue) {
+    await embeddingQueue.add(
+      { memoryId, content },
+      {
+        attempts: MAX_ATTEMPTS,
+        backoff: { type: 'exponential', delay: BACKOFF_DELAY_MS },
+        removeOnComplete: 1000,
+        removeOnFail: 1000,
+      }
+    );
+    return true;
+  }
 
+  // No Redis — process synchronously in background
+  processMemoryEmbedding(memoryId, content).catch((err) => {
+    console.error(`[Embedding] Sync processing failed for ${memoryId}:`, err);
+    db('memories').where('id', memoryId).update({
+      embedding_status: 'failed',
+      embedding_error: err instanceof Error ? err.message : 'Unknown error',
+    }).catch(() => {});
+  });
   return true;
 }
 
@@ -72,8 +81,8 @@ export function startEmbeddingWorker(): void {
 
   const embeddingQueue = getQueue();
   if (!embeddingQueue) {
-    if (config.database.type === 'postgres') {
-      console.warn('Embedding worker disabled: REDIS_URL and OPENAI_API_KEY are required in PostgreSQL mode.');
+    if (isEmbeddingEnabled()) {
+      console.log('Embedding queue disabled (no REDIS_URL). Embeddings will be processed synchronously.');
     }
     return;
   }

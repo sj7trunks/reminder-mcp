@@ -1,28 +1,38 @@
-import OpenAI from 'openai';
 import { config } from '../config/index.js';
 
-export const EMBEDDING_MODEL = 'text-embedding-3-small';
+export const EMBEDDING_MODEL = config.embedding.model;
 
-let openaiClient: OpenAI | null = null;
+interface EmbeddingResponse {
+  data: Array<{ embedding: number[]; index: number }>;
+  model: string;
+  usage: { prompt_tokens: number; total_tokens: number };
+}
 
-function getOpenAIClient(): OpenAI {
-  if (!config.openai.apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured');
-  }
-
-  if (!openaiClient) {
-    openaiClient = new OpenAI({ apiKey: config.openai.apiKey });
-  }
-
-  return openaiClient;
+export function isEmbeddingEnabled(): boolean {
+  return config.database.type === 'postgres' && !!config.embedding.apiUrl;
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const openai = getOpenAIClient();
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
+  const { apiUrl, apiKey, model, dimensions } = config.embedding;
+
+  if (!apiUrl) {
+    throw new Error('EMBEDDING_API_URL is not configured');
+  }
+
+  const response = await fetch(`${apiUrl}/v1/embeddings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify({ input: text, model, dimensions }),
   });
 
-  return response.data[0]?.embedding ?? [];
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Embedding API error (${response.status}): ${errorText}`);
+  }
+
+  const data = (await response.json()) as EmbeddingResponse;
+  return data.data[0]?.embedding ?? [];
 }

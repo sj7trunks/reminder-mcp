@@ -23,6 +23,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - default
+      - web
     ports:
       - "3000:3000"
     environment:
@@ -46,11 +49,9 @@ services:
       - DATABASE_TYPE=postgres
       - DATABASE_URL=postgresql://${POSTGRES_USER:-reminder}:${POSTGRES_PASSWORD:-reminder}@postgres:5432/reminder_mcp
 
-      # Embedding API for vector search (OpenAI-compatible)
-      - EMBEDDING_API_URL=${EMBEDDING_API_URL:-}
-      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
-      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-1536}
+      # Embeddings (OpenAI for semantic search + pgvector)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - REDIS_URL=${REDIS_URL:-}
 
       # Timezone
       - DEFAULT_TIMEZONE=${DEFAULT_TIMEZONE:-America/Los_Angeles}
@@ -84,7 +85,13 @@ services:
       - "traefik.http.routers.reminder-mcp-web.tls.certresolver=letsencrypt"
       - "traefik.http.routers.reminder-mcp-web.middlewares=authentik-forward-auth"
 
+      - "traefik.docker.network=opt_web"
       - "traefik.http.services.reminder-mcp.loadbalancer.server.port=3000"
+
+networks:
+  web:
+    name: opt_web
+    external: true
 
 volumes:
   pg-data:

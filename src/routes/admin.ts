@@ -176,7 +176,7 @@ router.post(
 
 // POST /api/admin/backfill-embeddings — generate embeddings for memories missing them
 router.post('/backfill-embeddings', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
-  const enabled = config.database.type === 'postgres' && !!config.openai.apiKey;
+  const enabled = config.database.type === 'postgres' && !!config.embedding.apiUrl;
   if (!enabled) {
     res.status(400).json({ error: 'Embeddings not enabled. Set OPENAI_API_KEY and ensure DATABASE_TYPE=postgres.' });
     return;
@@ -226,7 +226,7 @@ router.post('/backfill-embeddings', requireAuth, requireAdmin, async (_req: Auth
 // GET /api/admin/embedding-status — check embedding coverage
 router.get('/embedding-status', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
   try {
-    const enabled = config.database.type === 'postgres' && !!config.openai.apiKey;
+    const enabled = config.database.type === 'postgres' && !!config.embedding.apiUrl;
     const stats = await db('memories')
       .select(
         db.raw('count(*) as total'),

@@ -15,9 +15,6 @@ const configSchema = z.object({
   redis: z.object({
     url: z.string().optional(),
   }),
-  openai: z.object({
-    apiKey: z.string().optional(),
-  }),
   webhook: z.object({
     url: z.string().optional(),
     apiKey: z.string().optional(),
@@ -55,9 +52,6 @@ export function loadConfig(): Config {
     },
     redis: {
       url: process.env.REDIS_URL,
-    },
-    openai: {
-      apiKey: process.env.OPENAI_API_KEY,
     },
     webhook: {
       url: process.env.WEBHOOK_URL,

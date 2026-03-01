@@ -76,7 +76,7 @@ function toResponse(result: unknown): { content: [{ type: 'text'; text: string }
 }
 
 export function createServer(userId: string, context?: McpContext): McpServer {
-  const hasSemanticSearch = config.database.type === 'postgres' && !!config.openai.apiKey;
+  const hasSemanticSearch = config.database.type === 'postgres' && !!config.embedding.apiUrl;
 
   const server = new McpServer({
     name: 'reminder-mcp',

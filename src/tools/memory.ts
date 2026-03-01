@@ -202,7 +202,7 @@ export async function remember(
   const isPostgres = config.database.type === 'postgres';
   let precomputedEmbedding: number[] | undefined;
 
-  if (isPostgres && config.openai.apiKey) {
+  if (isPostgres && config.embedding.apiUrl) {
     try {
       const newEmbedding = await generateEmbedding(input.content);
       precomputedEmbedding = newEmbedding;
