@@ -35,7 +35,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install runtime dependencies for better-sqlite3
+# Install build dependencies for native modules, install deps, then clean up
 RUN apk add --no-cache python3 make g++
 
 # Copy package files
@@ -43,7 +43,6 @@ COPY package*.json ./
 
 # Install production dependencies only
 RUN npm ci --omit=dev && \
-    # Clean up build tools after native modules are built
     apk del python3 make g++ && \
     rm -rf /root/.npm /tmp/*
 

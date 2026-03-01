@@ -84,7 +84,7 @@ export async function getActivity(input: z.infer<typeof GetActivitySchema>): Pro
     type: row.type as Activity['type'],
     action: row.action as string,
     entity_id: row.entity_id as string | null,
-    metadata: JSON.parse((row.metadata as string) || '{}'),
+    metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata || '{}') : (row.metadata || {}),
     created_at: new Date(row.created_at as string),
   }));
 

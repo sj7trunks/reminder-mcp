@@ -6,6 +6,12 @@ const configSchema = z.object({
     path: z.string().default('./data/reminder.db'),
     url: z.string().optional(),
   }),
+  embedding: z.object({
+    apiUrl: z.string().optional(),
+    apiKey: z.string().optional(),
+    model: z.string().default('text-embedding-3-small'),
+    dimensions: z.number().default(1536),
+  }),
   redis: z.object({
     url: z.string().optional(),
   }),
@@ -40,6 +46,12 @@ export function loadConfig(): Config {
       type: databaseType,
       path: process.env.DATABASE_PATH || './data/reminder.db',
       url: databaseType === 'postgres' ? process.env.DATABASE_URL : undefined,
+    },
+    embedding: {
+      apiUrl: process.env.EMBEDDING_API_URL,
+      apiKey: process.env.EMBEDDING_API_KEY,
+      model: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+      dimensions: parseInt(process.env.EMBEDDING_DIMENSIONS || '1536', 10),
     },
     redis: {
       url: process.env.REDIS_URL,

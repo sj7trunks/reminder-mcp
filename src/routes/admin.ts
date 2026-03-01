@@ -2,6 +2,8 @@ import { Router, raw } from 'express';
 import { createGzip, gunzipSync } from 'zlib';
 import { requireAuth, requireAdmin, type AuthRequest } from '../middleware/auth.js';
 import { db } from '../db/index.js';
+import { config } from '../config/index.js';
+import { processMemoryEmbedding } from '../services/embedding-worker.js';
 
 const router = Router();
 
@@ -171,5 +173,78 @@ router.post(
     }
   }
 );
+
+// POST /api/admin/backfill-embeddings — generate embeddings for memories missing them
+router.post('/backfill-embeddings', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
+  const enabled = config.database.type === 'postgres' && !!config.openai.apiKey;
+  if (!enabled) {
+    res.status(400).json({ error: 'Embeddings not enabled. Set OPENAI_API_KEY and ensure DATABASE_TYPE=postgres.' });
+    return;
+  }
+
+  try {
+    const pending = await db('memories').whereNull('embedding').count('id as count').first();
+    const count = Number(pending?.count || 0);
+
+    if (count === 0) {
+      res.json({ message: 'All memories already have embeddings', total: 0, embedded: 0, failed: 0 });
+      return;
+    }
+
+    res.json({ message: `Backfill started for ${count} memories. Check server logs for progress.`, pending: count });
+
+    // Fire and forget — runs after response is sent
+    (async () => {
+      const rows = await db('memories')
+        .whereNull('embedding')
+        .select('id', 'content')
+        .orderBy('created_at', 'asc');
+
+      let embedded = 0;
+      let failed = 0;
+      for (const row of rows) {
+        try {
+          await processMemoryEmbedding(row.id as string, row.content as string);
+          embedded++;
+        } catch (err) {
+          failed++;
+          console.error(`[Backfill] Failed memory ${(row.id as string).slice(0, 8)}:`, err);
+        }
+      }
+      console.log(`[Backfill] Complete: ${embedded} embedded, ${failed} failed out of ${rows.length}`);
+    })().catch((err) => {
+      console.error('[Backfill] Error:', err);
+    });
+  } catch (error) {
+    console.error('Backfill error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to start backfill' });
+    }
+  }
+});
+
+// GET /api/admin/embedding-status — check embedding coverage
+router.get('/embedding-status', requireAuth, requireAdmin, async (_req: AuthRequest, res) => {
+  try {
+    const enabled = config.database.type === 'postgres' && !!config.openai.apiKey;
+    const stats = await db('memories')
+      .select(
+        db.raw('count(*) as total'),
+        db.raw('count(embedding) as embedded'),
+        db.raw('count(*) - count(embedding) as pending')
+      )
+      .first();
+
+    res.json({
+      enabled,
+      total: Number(stats?.total || 0),
+      embedded: Number(stats?.embedded || 0),
+      pending: Number(stats?.pending || 0),
+    });
+  } catch (error) {
+    console.error('Embedding status error:', error);
+    res.status(500).json({ error: 'Failed to get embedding status' });
+  }
+});
 
 export default router;
