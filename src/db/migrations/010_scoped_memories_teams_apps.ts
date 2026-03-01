@@ -51,7 +51,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // Data migration: set author_id = user_id for existing memories
-  await knex.raw('UPDATE memories SET author_id = user_id');
+  await knex.raw('UPDATE memories SET author_id = user_id::uuid');
 }
 
 export async function down(knex: Knex): Promise<void> {
