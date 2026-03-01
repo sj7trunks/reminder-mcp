@@ -334,6 +334,23 @@ export function createServer(userId: string, context?: McpContext): McpServer {
     }
   );
 
+  // ============ CAPABILITY TOOLS ============
+
+  server.tool(
+    'get_capabilities',
+    'Returns the capabilities of this MCP server instance',
+    {},
+    async () => {
+      const hasEmbeddings = config.database.type === 'postgres' && !!config.embedding.apiUrl;
+      return toResponse({
+        semantic_search: hasEmbeddings,
+        memory_dedup: hasEmbeddings,
+        push_notifications: !!config.webhook.url,
+        sso: !!config.authentik.host,
+      });
+    }
+  );
+
   // ============ HISTORY TOOLS ============
 
   server.tool(
